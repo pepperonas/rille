@@ -47,9 +47,14 @@ impl SoftTakeover {
         self.engaged = false;
     }
 
-    /// The value changed on the software side (UI, engine). Echoes of our own hardware moves
-    /// are ignored; a real change disengages the control.
-    pub fn sync_software(&mut self, value: f32) {
+    /// Set the software value without changing the pickup state (seeding on connect).
+    pub fn seed(&mut self, value: f32) {
+        self.software = value;
+    }
+
+    /// The value was changed somewhere else (the app). Only call this for changes that did not
+    /// come from this controller; a real change disengages the control.
+    pub fn software_changed(&mut self, value: f32) {
         if (value - self.software).abs() > ECHO_TOLERANCE {
             self.software = value;
             self.engaged = false;
@@ -107,7 +112,7 @@ mod tests {
         let mut t = SoftTakeover::new(0.5);
         t.engage();
         assert_eq!(t.on_hardware(0.9), Some(0.9));
-        t.sync_software(0.2); // moved in the app
+        t.software_changed(0.2); // moved in the app
         assert_eq!(t.on_hardware(0.95), None);
         assert!(t.on_hardware(0.21).is_some());
     }
@@ -117,7 +122,7 @@ mod tests {
         let mut t = SoftTakeover::new(0.5);
         t.engage();
         t.on_hardware(0.7);
-        t.sync_software(0.7001);
+        t.software_changed(0.7001);
         assert_eq!(t.on_hardware(0.72), Some(0.72));
     }
 

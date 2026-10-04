@@ -9,10 +9,10 @@ use std::time::{Duration, Instant};
 
 use rille_core::{Command, DeckCommand, DeckId, MixerCommand, Snapshot};
 use rille_engine::CommandSender;
-use rille_midi::ControllerSession;
 use rille_midi::ddj200::{Control, ControllerAction, DeckLamps, Lamp, LampState, Scope};
 use rille_midi::monitor::{Direction, Monitor, MonitorEntry, describe};
 use rille_midi::port::{Connection, DDJ200_PORT, find_input};
+use rille_midi::{ControllerSession, TakeoverKey};
 use serde::Serialize;
 
 use crate::audio_service::AudioService;
@@ -33,6 +33,8 @@ pub struct ControllerStatus {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitorLine {
+    /// Monotonic sequence number, stable key for the UI list.
+    pub seq: u64,
     pub time_us: u64,
     pub outgoing: bool,
     pub hex: String,
@@ -47,6 +49,7 @@ impl From<MonitorEntry> for MonitorLine {
             .collect::<Vec<_>>()
             .join(" ");
         MonitorLine {
+            seq: e.seq,
             time_us: e.time_us,
             outgoing: e.direction == Direction::Out,
             hex,
@@ -63,6 +66,8 @@ pub enum ControllerEvent {
 pub type ControllerNotify = Box<dyn Fn(ControllerEvent) + Send>;
 
 enum Request {
+    /// The app changed an absolute control; the hardware has to pick it up again.
+    SoftwareChanged(TakeoverKey, f32),
     SetVinyl(bool),
     Monitor(bool),
     Status(Sender<ControllerStatus>),
@@ -85,6 +90,11 @@ impl ControllerService {
             return None;
         }
         Some(ControllerService { requests })
+    }
+
+    /// Report a change made in the app (not by the controller) to an absolute control.
+    pub fn software_changed(&self, key: TakeoverKey, value: f32) {
+        let _ = self.requests.send(Request::SoftwareChanged(key, value));
     }
 
     pub fn set_vinyl_mode(&self, on: bool) {
@@ -227,7 +237,15 @@ impl Worker {
                         self.send_all(&out);
                         (self.notify)(ControllerEvent::Status(self.status()));
                     }
-                    Request::Monitor(on) => self.monitor_on = on,
+                    Request::SoftwareChanged(key, value) => {
+                        self.session.software_changed(key, value);
+                    }
+                    Request::Monitor(on) => {
+                        if on && !self.monitor_on {
+                            self.monitor = Monitor::new(); // no stale lines from last time
+                        }
+                        self.monitor_on = on;
+                    }
                     Request::Status(reply) => {
                         let _ = reply.send(self.status());
                     }
@@ -275,9 +293,10 @@ impl Worker {
                 self.connection = Some(connection);
                 let snapshot = self.audio.snapshot();
                 let audible = snapshot.decks.iter().any(|d| d.playing);
+                // Seed the software values first, then decide about pickup.
+                self.seed_software(&snapshot);
                 let mut out = Vec::new();
                 self.session.on_connect(!audible, &mut out);
-                self.sync_software(&snapshot);
                 self.send_all(&out);
                 (self.notify)(ControllerEvent::Status(self.status()));
             }
@@ -304,20 +323,22 @@ impl Worker {
         }
     }
 
-    fn sync_software(&mut self, s: &Snapshot) {
+    /// Engine values for the absolute controls, used when a controller connects. Not called
+    /// continuously: the snapshot lags behind the hardware, and diffing it would make a fast
+    /// fader move release itself.
+    fn seed_software(&mut self, s: &Snapshot) {
         self.session
-            .sync_software((Scope::Global, Control::Crossfader), s.crossfader);
+            .seed_software((Scope::Global, Control::Crossfader), s.crossfader);
         for deck in DeckId::ALL {
             let key = (Scope::Deck(deck), Control::ChannelFader);
             self.session
-                .sync_software(key, s.channel_fader[deck.index()]);
+                .seed_software(key, s.channel_fader[deck.index()]);
         }
     }
 
     fn tick(&mut self) {
         if self.connection.is_some() {
             let snapshot = self.audio.snapshot();
-            self.sync_software(&snapshot);
             let blink_on =
                 (self.started.elapsed().as_millis() / BLINK_PERIOD.as_millis()).is_multiple_of(2);
             let mut out = Vec::new();
@@ -456,6 +477,7 @@ mod tests {
     #[test]
     fn monitor_lines_are_hex() {
         let line = MonitorLine::from(MonitorEntry {
+            seq: 1,
             time_us: 5,
             direction: Direction::Out,
             bytes: [0x9F, 0x01, 0x7F],

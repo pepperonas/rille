@@ -14,6 +14,8 @@ pub enum Direction {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MonitorEntry {
+    /// Monotonic sequence number.
+    pub seq: u64,
     /// Microseconds since the monitor started.
     pub time_us: u64,
     pub direction: Direction,
@@ -28,6 +30,7 @@ pub struct Monitor {
     entries: VecDeque<MonitorEntry>,
     /// Entries pushed since the last `drain_new`.
     fresh: usize,
+    next_seq: u64,
 }
 
 impl Monitor {
@@ -35,6 +38,7 @@ impl Monitor {
         Monitor {
             entries: VecDeque::with_capacity(CAPACITY),
             fresh: 0,
+            next_seq: 0,
         }
     }
 
@@ -51,7 +55,10 @@ impl Monitor {
         if self.entries.len() == CAPACITY {
             self.entries.pop_front();
         }
+        let seq = self.next_seq;
+        self.next_seq += 1;
         self.entries.push_back(MonitorEntry {
+            seq,
             time_us,
             direction,
             bytes: b,

@@ -57,8 +57,8 @@ export function MidiMonitor({ ref, open, onClose }: { ref: Ref<HTMLDialogElement
             Noch keine Nachrichten. Bewege ein Bedienelement am DDJ-200.
           </p>
         )}
-        {lines.map((l, i) => (
-          <div key={`${l.timeUs}-${i}`} className={styles.line} data-out={l.outgoing || undefined}>
+        {lines.map((l) => (
+          <div key={l.seq} className={styles.line} data-out={l.outgoing || undefined}>
             <span className="numeric">{(l.timeUs / 1000).toFixed(1).padStart(9)} ms</span>
             <span className={styles.dir}>{l.outgoing ? '→' : '←'}</span>
             <span className={`${styles.hex} numeric`}>{l.hex}</span>

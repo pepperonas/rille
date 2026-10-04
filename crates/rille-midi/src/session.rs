@@ -15,18 +15,19 @@ use crate::takeover::SoftTakeover;
 /// An absolute control subject to soft takeover.
 pub type TakeoverKey = (Scope, Control);
 
-/// The absolute controls of the DDJ-200 (all normalised to 0..1 in hardware space).
-pub fn absolute_controls() -> Vec<TakeoverKey> {
-    let mut keys = vec![(Scope::Global, Control::Crossfader)];
+/// The absolute controls of the DDJ-200 (all normalised to 0..1 in hardware space) with the
+/// app's default value for each.
+pub fn absolute_controls() -> Vec<(TakeoverKey, f32)> {
+    let mut keys = vec![((Scope::Global, Control::Crossfader), 0.5)];
     for deck in DeckId::ALL {
         let s = Scope::Deck(deck);
         keys.extend([
-            (s, Control::ChannelFader),
-            (s, Control::TempoFader),
-            (s, Control::EqHi),
-            (s, Control::EqMid),
-            (s, Control::EqLow),
-            (s, Control::ColorFx),
+            ((s, Control::ChannelFader), 1.0),
+            ((s, Control::TempoFader), 0.5),
+            ((s, Control::EqHi), 0.5),
+            ((s, Control::EqMid), 0.5),
+            ((s, Control::EqLow), 0.5),
+            ((s, Control::ColorFx), 0.5),
         ]);
     }
     keys
@@ -50,7 +51,7 @@ impl ControllerSession {
     pub fn new() -> ControllerSession {
         let takeover = absolute_controls()
             .into_iter()
-            .map(|k| (k, SoftTakeover::new(0.0)))
+            .map(|(k, v)| (k, SoftTakeover::new(v)))
             .collect();
         ControllerSession {
             decoder: Decoder::new(),
@@ -88,11 +89,18 @@ impl ControllerSession {
         self.set_vinyl_mode(vinyl, out);
     }
 
-    /// The app or engine reports the current software value of an absolute control
-    /// (0..1, hardware orientation).
-    pub fn sync_software(&mut self, key: TakeoverKey, value: f32) {
+    /// Current software value of an absolute control (0..1, hardware orientation), without
+    /// changing pickup. Use before `on_connect` with the engine's values.
+    pub fn seed_software(&mut self, key: TakeoverKey, value: f32) {
         if let Some(t) = self.takeover.get_mut(&key) {
-            t.sync_software(value);
+            t.seed(value);
+        }
+    }
+
+    /// The app (not this controller) changed an absolute control: it must be picked up again.
+    pub fn software_changed(&mut self, key: TakeoverKey, value: f32) {
+        if let Some(t) = self.takeover.get_mut(&key) {
+            t.software_changed(value);
         }
     }
 
@@ -149,22 +157,44 @@ mod tests {
         assert_eq!(out[0], [0x90, 0x17, 0x00], "setting survives reconnect");
     }
 
+    /// The order the controller worker uses: seed from the engine, then connect.
+    fn connect_like_worker(s: &mut ControllerSession, adopt: bool) {
+        s.seed_software((Scope::Deck(DeckId::A), Control::ChannelFader), 1.0);
+        s.seed_software((Scope::Global, Control::Crossfader), 0.5);
+        s.on_connect(adopt, &mut Vec::new());
+    }
+
     #[test]
     fn first_connect_adopts_physical_positions() {
         let mut s = ControllerSession::new();
-        s.on_connect(true, &mut Vec::new());
+        connect_like_worker(&mut s, true);
         assert!(matches!(
             fader(&mut s, 0, 0x40),
             Some(ControllerAction::ChannelFader { .. })
         ));
+        s.on_input(&[0xB6, 0x1F, 0x05]);
+        assert!(
+            s.on_input(&[0xB6, 0x3F, 0x00]).1.is_some(),
+            "crossfader far from centre"
+        );
+    }
+
+    #[test]
+    fn a_fast_sweep_is_never_interrupted() {
+        // The engine snapshot lags behind the hardware; nothing may treat those stale values
+        // as an app change. Every step of a fast sweep must come through.
+        let mut s = ControllerSession::new();
+        connect_like_worker(&mut s, true);
+        for msb in (0..=0x7F).step_by(3) {
+            assert!(fader(&mut s, 0, msb).is_some(), "dropped at {msb}");
+        }
     }
 
     #[test]
     fn reconnect_while_playing_requires_pickup() {
         let mut s = ControllerSession::new();
-        s.on_connect(true, &mut Vec::new());
+        connect_like_worker(&mut s, true);
         fader(&mut s, 0, 0x7F); // fader up, music playing
-        s.sync_software((Scope::Deck(DeckId::A), Control::ChannelFader), 1.0);
         s.on_connect(false, &mut Vec::new()); // unplugged and back
         assert_eq!(fader(&mut s, 0, 0x00), None, "no sudden mute");
         assert_eq!(
@@ -179,12 +209,21 @@ mod tests {
     }
 
     #[test]
+    fn unsynced_controls_start_at_their_defaults() {
+        // EQ knob at centre after a reconnect mid-set: picked up right there, no kill needed.
+        let mut s = ControllerSession::new();
+        s.on_connect(false, &mut Vec::new());
+        s.on_input(&[0xB0, 0x07, 0x40]);
+        assert!(s.on_input(&[0xB0, 0x27, 0x00]).1.is_some());
+    }
+
+    #[test]
     fn app_change_needs_pickup_on_the_controller() {
         let mut s = ControllerSession::new();
         s.on_connect(true, &mut Vec::new());
         s.on_input(&[0xB6, 0x1F, 0x00]);
         assert!(s.on_input(&[0xB6, 0x3F, 0x00]).1.is_some());
-        s.sync_software((Scope::Global, Control::Crossfader), 1.0); // dragged in the app
+        s.software_changed((Scope::Global, Control::Crossfader), 1.0); // dragged in the app
         s.on_input(&[0xB6, 0x1F, 0x10]);
         assert_eq!(s.on_input(&[0xB6, 0x3F, 0x00]).1, None);
     }

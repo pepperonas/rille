@@ -33,6 +33,11 @@ pub fn matches(port_name: &str, pattern: &str) -> bool {
     port_name.to_lowercase().contains(&pattern.to_lowercase())
 }
 
+/// rille's virtual controller (see `virtual_ddj`).
+pub fn is_virtual(port_name: &str) -> bool {
+    port_name.contains(crate::virtual_ddj::VIRTUAL_MARKER)
+}
+
 /// Names of MIDI inputs matching `pattern` (cheap; used for hotplug polling).
 pub fn find_input(pattern: &str) -> Option<String> {
     let input = MidiInput::new(CLIENT).ok()?;
@@ -108,5 +113,11 @@ mod tests {
         assert!(matches("Pioneer DDJ-200 MIDI 1", DDJ200_PORT));
         assert!(matches("ddj-200 virtual", DDJ200_PORT));
         assert!(!matches("DDJ-400", DDJ200_PORT));
+    }
+
+    #[test]
+    fn recognises_the_virtual_controller() {
+        assert!(is_virtual(crate::virtual_ddj::VIRTUAL_NAME));
+        assert!(!is_virtual("DDJ-200"));
     }
 }

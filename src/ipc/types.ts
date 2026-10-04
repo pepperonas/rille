@@ -86,6 +86,7 @@ export interface ControllerStatus {
 }
 
 export interface MonitorLine {
+  seq: number;
   timeUs: number;
   outgoing: boolean;
   hex: string;

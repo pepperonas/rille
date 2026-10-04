@@ -9,6 +9,8 @@ use midir::{MidiInput, MidiInputConnection, MidiOutput, MidiOutputConnection};
 
 use crate::port::MidiError;
 
+/// Part of every virtual controller name; real devices never contain it.
+pub const VIRTUAL_MARKER: &str = "(rille virtuell)";
 pub const VIRTUAL_NAME: &str = "DDJ-200 (rille virtuell)";
 
 pub struct VirtualDdj {

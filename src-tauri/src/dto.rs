@@ -98,6 +98,22 @@ pub enum MixerAction {
     MasterGain { value: f32 },
 }
 
+impl MixerAction {
+    /// The controller element this action also exists on, with its value in hardware space.
+    pub fn takeover(&self) -> Option<(rille_midi::TakeoverKey, f32)> {
+        use rille_midi::ddj200::{Control, Scope};
+        match *self {
+            MixerAction::ChannelFader { deck, value } => {
+                Some(((Scope::Deck(deck.into()), Control::ChannelFader), value))
+            }
+            MixerAction::Crossfader { value } => {
+                Some(((Scope::Global, Control::Crossfader), value))
+            }
+            _ => None,
+        }
+    }
+}
+
 impl From<MixerAction> for MixerCommand {
     fn from(a: MixerAction) -> MixerCommand {
         match a {
@@ -251,6 +267,28 @@ mod tests {
         assert_eq!(
             MixerCommand::from(a),
             MixerCommand::CrossfaderCurve(CrossfaderCurve::Cut)
+        );
+    }
+
+    #[test]
+    fn app_fader_moves_are_reported_for_takeover() {
+        use rille_midi::ddj200::{Control, Scope};
+        let a = MixerAction::ChannelFader {
+            deck: Deck::B,
+            value: 0.3,
+        };
+        assert_eq!(
+            a.takeover(),
+            Some(((Scope::Deck(DeckId::B), Control::ChannelFader), 0.3))
+        );
+        assert_eq!(
+            MixerAction::Crossfader { value: 0.1 }.takeover(),
+            Some(((Scope::Global, Control::Crossfader), 0.1))
+        );
+        assert_eq!(
+            MixerAction::MasterGain { value: 1.0 }.takeover(),
+            None,
+            "not on the DDJ-200"
         );
     }
 

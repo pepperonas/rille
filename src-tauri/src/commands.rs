@@ -5,8 +5,8 @@ use std::sync::Mutex;
 
 use rille_core::Command;
 use rille_engine::output::{self, OutputRequest};
-use tauri::State;
 use tauri::ipc::Channel;
+use tauri::{Manager, State};
 
 use crate::audio_service::AudioService;
 use crate::controller_service::{ControllerService, ControllerStatus};
@@ -69,8 +69,14 @@ pub fn deck_command(deck: Deck, action: DeckAction, audio: State<'_, AudioServic
 }
 
 #[tauri::command]
-pub fn mixer_command(action: MixerAction, audio: State<'_, AudioService>) {
+pub fn mixer_command(action: MixerAction, audio: State<'_, AudioService>, app: tauri::AppHandle) {
     audio.send(Command::Mixer(action.into()));
+    // A control moved in the app must be picked up again on the hardware.
+    if let (Some(controller), Some((key, value))) =
+        (app.try_state::<ControllerService>(), action.takeover())
+    {
+        controller.software_changed(key, value);
+    }
 }
 
 #[tauri::command]
