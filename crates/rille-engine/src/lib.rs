@@ -2,6 +2,7 @@
 //! I/O; see `.claude/rules/audio-realtime.md`.
 
 pub mod curves;
+pub mod dsp;
 pub mod engine;
 pub mod meter;
 pub mod output;
