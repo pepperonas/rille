@@ -32,8 +32,8 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--md-primary);
-  outline-offset: 2px;
+  outline: var(--stroke-thick) solid var(--md-primary);
+  outline-offset: var(--stroke-thick);
 }
 
 /* Tabular digits wherever numbers update live, so nothing jumps. */

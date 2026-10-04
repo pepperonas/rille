@@ -1,6 +1,6 @@
 .app {
   display: grid;
-  grid-template-rows: var(--titlebar-height) minmax(0, 1fr) minmax(200px, 38%);
+  grid-template-rows: var(--titlebar-height) minmax(0, 1fr) minmax(var(--layout-library-min), var(--layout-library-share));
   height: 100%;
   gap: var(--space-2);
   padding: 0 var(--space-2) var(--space-2);
@@ -8,7 +8,7 @@
 
 .stage {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(var(--layout-mixer-min), var(--layout-mixer-max)) minmax(0, 1fr);
   gap: var(--space-2);
   min-height: 0;
 }

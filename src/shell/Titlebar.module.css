@@ -10,7 +10,7 @@
 .wordmark {
   font: var(--type-title-m);
   font-stretch: var(--font-stretch-emphasized);
-  letter-spacing: 0.02em;
+  letter-spacing: var(--tracking-wide);
   color: var(--md-on-surface-variant);
   flex: 1;
 }
@@ -18,8 +18,8 @@
 .iconButton {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: var(--size-icon-button);
+  height: var(--size-icon-button);
   border: 0;
   border-radius: var(--shape-full);
   background: transparent;

@@ -28,8 +28,8 @@
 .badge {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: var(--size-badge);
+  height: var(--size-badge);
   border-radius: var(--shape-md);
   background: var(--accent-container);
   color: var(--on-accent-container);
@@ -52,7 +52,7 @@
   gap: var(--space-2);
   padding: var(--space-6);
   margin-top: var(--space-4);
-  border: 2px dashed var(--md-outline-variant);
+  border: var(--stroke-thick) dashed var(--md-outline-variant);
   border-radius: var(--shape-lg);
 }
 

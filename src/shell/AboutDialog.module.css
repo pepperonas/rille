@@ -2,7 +2,7 @@
   border: 0;
   border-radius: var(--shape-xl);
   padding: var(--space-6);
-  min-width: 320px;
+  min-width: var(--size-dialog-min);
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
 }
@@ -47,7 +47,7 @@
 .footer {
   margin-top: var(--space-4);
   padding-top: var(--space-4);
-  border-top: 1px solid var(--md-outline-variant);
+  border-top: var(--stroke-hairline) solid var(--md-outline-variant);
   font: var(--type-body-s);
   color: var(--md-on-surface-variant);
 }

@@ -1,0 +1,4 @@
+src/design/color.generated.css
+dist
+target
+pnpm-lock.yaml

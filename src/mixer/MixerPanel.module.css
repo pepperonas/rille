@@ -9,7 +9,7 @@
 
 .label {
   font: var(--type-label-l);
-  letter-spacing: 0.08em;
+  letter-spacing: var(--tracking-caps);
   text-transform: uppercase;
   color: var(--md-on-surface-variant);
 }

@@ -72,7 +72,24 @@
   --state-pressed: 0.1;
   --state-dragged: 0.16;
 
+  /* Sizes */
+  --size-icon-button: 32px;
+  --size-badge: 32px;
+  --size-dialog-min: 320px;
+
+  /* Strokes */
+  --stroke-hairline: 1px;
+  --stroke-thick: 2px;
+
+  /* Letter spacing */
+  --tracking-wide: 0.02em;
+  --tracking-caps: 0.08em;
+
   /* Layout */
+  --layout-library-min: 200px;
+  --layout-library-share: 38%;
+  --layout-mixer-min: 220px;
+  --layout-mixer-max: 300px;
   --titlebar-height: 38px;
   --titlebar-inset-left: 80px; /* room for the native traffic lights */
 }
