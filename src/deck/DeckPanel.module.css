@@ -1,0 +1,71 @@
+.deck {
+  --accent: var(--deck-a);
+  --on-accent: var(--deck-a-on);
+  --accent-container: var(--deck-a-container);
+  --on-accent-container: var(--deck-a-on-container);
+
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-radius: var(--shape-xl);
+  background: var(--md-surface-container-low);
+  padding: var(--space-4);
+}
+
+.deck[data-deck='b'] {
+  --accent: var(--deck-b);
+  --on-accent: var(--deck-b-on);
+  --accent-container: var(--deck-b-container);
+  --on-accent-container: var(--deck-b-on-container);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.badge {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--shape-md);
+  background: var(--accent-container);
+  color: var(--on-accent-container);
+  font: var(--type-title-m);
+  font-stretch: var(--font-stretch-emphasized);
+}
+
+.label {
+  font: var(--type-title-m);
+  color: var(--md-on-surface-variant);
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  margin-top: var(--space-4);
+  border: 2px dashed var(--md-outline-variant);
+  border-radius: var(--shape-lg);
+}
+
+.emptyTitle {
+  margin: 0;
+  font: var(--type-title-l);
+  font-stretch: var(--font-stretch-emphasized);
+  color: var(--md-on-surface);
+}
+
+.emptyHint {
+  margin: 0;
+  max-width: 34ch;
+  font: var(--type-body-m);
+  color: var(--md-on-surface-variant);
+}

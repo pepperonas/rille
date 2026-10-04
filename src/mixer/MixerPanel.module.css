@@ -1,0 +1,15 @@
+.mixer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  border-radius: var(--shape-xl);
+  background: var(--md-surface-container);
+  padding: var(--space-4);
+}
+
+.label {
+  font: var(--type-label-l);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--md-on-surface-variant);
+}

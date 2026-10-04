@@ -1,0 +1,29 @@
+[package]
+name = "rille"
+description = "DJ app for macOS with Pioneer DDJ-200 support"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "rille_app"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.5", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = ["macos-private-api"] }
+serde.workspace = true
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rille-core.workspace = true
+rille-engine.workspace = true
+rille-midi.workspace = true
+rille-library.workspace = true
+
+[lints]
+workspace = true

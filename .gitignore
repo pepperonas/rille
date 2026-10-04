@@ -1,0 +1,14 @@
+/target
+node_modules/
+dist/
+.DS_Store
+*.log
+src-tauri/gen/
+.vite/
+coverage/
+playwright-report/
+test-results/
+temp/
+
+# Pioneer DJ document, copyrighted: keep locally, do not redistribute
+docs/ddj-200_midi_message_list.pdf

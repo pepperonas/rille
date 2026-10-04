@@ -1,0 +1,43 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font: var(--type-body-m);
+  color: var(--md-on-surface);
+  /* Transparent so the native vibrancy shows through the side panels; the main stage paints
+     its own surface. In a plain browser (mock mode) this falls back to the surface colour. */
+  background: var(--md-surface);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  overflow: hidden;
+}
+
+html.native body {
+  background: transparent;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--md-primary);
+  outline-offset: 2px;
+}
+
+/* Tabular digits wherever numbers update live, so nothing jumps. */
+.numeric {
+  font-family: var(--font-numeric);
+  font-variant-numeric: tabular-nums;
+}

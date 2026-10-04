@@ -1,0 +1,14 @@
+[package]
+name = "rille-core"
+description = "Shared types for rille (commands, snapshot, units)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,24 @@
+.library {
+  display: flex;
+  border-radius: var(--shape-xl);
+  background: var(--md-surface-container-low);
+  min-height: 0;
+}
+
+.empty {
+  margin: auto;
+  text-align: center;
+  padding: var(--space-6);
+}
+
+.emptyTitle {
+  margin: 0 0 var(--space-2);
+  font: var(--type-title-l);
+  font-stretch: var(--font-stretch-emphasized);
+}
+
+.emptyHint {
+  margin: 0;
+  font: var(--type-body-m);
+  color: var(--md-on-surface-variant);
+}

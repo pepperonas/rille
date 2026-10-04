@@ -1,0 +1,15 @@
+[package]
+name = "rille-library"
+description = "Track library, decoding and analysis for rille"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+rille-core.workspace = true
+
+[lints]
+workspace = true

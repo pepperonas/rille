@@ -1,0 +1,39 @@
+.bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: var(--titlebar-height);
+  padding-left: var(--titlebar-inset-left);
+  padding-right: var(--space-2);
+}
+
+.wordmark {
+  font: var(--type-title-m);
+  font-stretch: var(--font-stretch-emphasized);
+  letter-spacing: 0.02em;
+  color: var(--md-on-surface-variant);
+  flex: 1;
+}
+
+.iconButton {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--shape-full);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  transition: border-radius var(--motion-duration-short) var(--motion-easing-emphasized),
+    background-color var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.iconButton:hover {
+  background: color-mix(in srgb, var(--md-on-surface) calc(var(--state-hover) * 100%), transparent);
+}
+
+.iconButton:active {
+  border-radius: var(--shape-md);
+  background: color-mix(in srgb, var(--md-on-surface) calc(var(--state-pressed) * 100%), transparent);
+}
