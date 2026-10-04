@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Fader } from '../components/Fader';
 import { backend } from '../ipc';
 import type { Deck, TempoRange } from '../ipc/types';
@@ -11,6 +11,7 @@ import {
 } from '../state/extrapolate';
 import { useAppState } from '../state/store';
 import { useOptimistic } from '../state/useOptimistic';
+import { type BendDirection, bendOf, holdBend } from './bend';
 import { HoldButton } from './HoldButton';
 import styles from './Tempo.module.css';
 
@@ -63,12 +64,16 @@ export function TempoButtons({ deck }: { deck: Deck }) {
   const keylock = useAppState((s) => s.frame?.decks[i]?.keylock ?? false);
   const reverse = useAppState((s) => s.frame?.decks[i]?.reverse ?? false);
   const key = useOptimistic(keylock);
-  const [bend, setBend] = useState<-1 | 0 | 1>(0);
+  const [held, setHeld] = useState<BendDirection[]>([]);
+  const heldRef = useRef<BendDirection[]>([]);
+  const bend = bendOf(held);
 
-  const hold = (direction: -1 | 1) => (held: boolean) => {
-    const d = held ? direction : 0;
-    setBend(d);
-    backend.deck(deck, { type: 'bend', direction: d });
+  const hold = (direction: BendDirection, down: boolean) => {
+    const next = holdBend(heldRef.current, direction, down);
+    const changed = bendOf(next) !== bendOf(heldRef.current);
+    heldRef.current = next;
+    setHeld(next);
+    if (changed) backend.deck(deck, { type: 'bend', direction: bendOf(next) });
   };
 
   return (
@@ -100,7 +105,7 @@ export function TempoButtons({ deck }: { deck: Deck }) {
           className={styles.bendButton}
           label="Langsamer (halten)"
           active={bend === -1}
-          onHold={hold(-1)}
+          onHold={(down) => hold(-1, down)}
         >
           −
         </HoldButton>
@@ -108,7 +113,7 @@ export function TempoButtons({ deck }: { deck: Deck }) {
           className={styles.bendButton}
           label="Schneller (halten)"
           active={bend === 1}
-          onHold={hold(1)}
+          onHold={(down) => hold(1, down)}
         >
           +
         </HoldButton>

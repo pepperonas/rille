@@ -1,7 +1,9 @@
 //! Default function assignment: [`ControlEvent`] → [`ControllerAction`].
 //!
-//! The assignment is one `match` over (control, shift, value) — the table of the spec — and the
-//! only state it keeps is whether each jog is touched (scratch vs. bend).
+//! The assignment is one `match` over (control, shift, value) — the table of the spec. The only
+//! state it keeps is what is being held (jog touched, shift + play for reverse) and whether vinyl
+//! mode is on, so a hold can always be released again — on a vinyl toggle, a disconnect or a
+//! release message that arrives without shift.
 
 use rille_core::DeckId;
 
@@ -92,9 +94,22 @@ pub enum ControllerAction {
     },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Mapper {
     touching: [bool; 2],
+    reversing: [bool; 2],
+    vinyl: bool,
+}
+
+impl Default for Mapper {
+    fn default() -> Self {
+        Mapper {
+            touching: [false; 2],
+            reversing: [false; 2],
+            // The DDJ-200 starts in vinyl mode.
+            vinyl: true,
+        }
+    }
 }
 
 /// Tempo fader 0..1 (0 = top) → -1..+1 with the top meaning slower, as printed on the device.
@@ -107,8 +122,47 @@ impl Mapper {
         Mapper::default()
     }
 
+    /// Forget everything held, without reporting it. Prefer [`Mapper::release_held`].
     pub fn reset(&mut self) {
         self.touching = [false; 2];
+        self.reversing = [false; 2];
+    }
+
+    /// Vinyl mode on or off. Turning it off releases a platter that is being touched: without
+    /// vinyl mode the touch has no meaning, and a hanging scratch would hold the record still.
+    pub fn set_vinyl(&mut self, on: bool) -> Vec<ControllerAction> {
+        self.vinyl = on;
+        if on {
+            return Vec::new();
+        }
+        DeckId::ALL
+            .into_iter()
+            .filter(|d| std::mem::take(&mut self.touching[d.index()]))
+            .map(|deck| ControllerAction::ScratchTouch {
+                deck,
+                touching: false,
+            })
+            .collect()
+    }
+
+    /// Release everything held (touch, reverse) and report it, e.g. when the controller goes
+    /// away mid-gesture. Each hold is released once.
+    pub fn release_held(&mut self) -> Vec<ControllerAction> {
+        let mut out = Vec::new();
+        for deck in DeckId::ALL {
+            if std::mem::take(&mut self.touching[deck.index()]) {
+                out.push(ControllerAction::ScratchTouch {
+                    deck,
+                    touching: false,
+                });
+            }
+        }
+        for deck in DeckId::ALL {
+            if std::mem::take(&mut self.reversing[deck.index()]) {
+                out.push(ControllerAction::Reverse { deck, on: false });
+            }
+        }
+        out
     }
 
     pub fn map(&mut self, e: ControlEvent) -> Option<ControllerAction> {
@@ -128,7 +182,15 @@ impl Mapper {
         match (e.control, e.shifted, e.value) {
             (Control::Shift, _, Button(held)) => Some(A::ShiftHeld { deck, held }),
             (Control::Play, false, Button(true)) => Some(A::PlayPause(deck)),
-            (Control::Play, true, Button(on)) => Some(A::Reverse { deck, on }),
+            (Control::Play, true, Button(on)) => {
+                self.reversing[deck.index()] = on;
+                Some(A::Reverse { deck, on })
+            }
+            // Shift let go before play: the release arrives unshifted and must still end reverse.
+            (Control::Play, false, Button(false)) => {
+                std::mem::take(&mut self.reversing[deck.index()])
+                    .then_some(A::Reverse { deck, on: false })
+            }
             (Control::Cue, false, Button(pressed)) => Some(A::Cue { deck, pressed }),
             (Control::Cue, true, Button(true)) => Some(A::JumpToStart(deck)),
             (Control::Sync, false, Button(true)) => Some(A::SyncOnce(deck)),
@@ -138,6 +200,7 @@ impl Mapper {
                 deck,
                 value: tempo_from_fader(v),
             }),
+            (Control::JogTouch, _, Button(_)) if !self.vinyl => None,
             (Control::JogTouch, false, Button(touching)) => {
                 self.touching[deck.index()] = touching;
                 Some(A::ScratchTouch { deck, touching })
@@ -303,6 +366,87 @@ mod tests {
             run(&[&[0x90, 0x36, 0x7F], &[0xB0, 0x23, 0x45]])[1],
             A::PitchBend { deck: DA, ticks: 5 }
         );
+    }
+
+    #[test]
+    fn touch_is_ignored_with_vinyl_mode_off() {
+        let mut d = Decoder::new();
+        let mut m = Mapper::new();
+        assert!(m.set_vinyl(false).is_empty(), "nothing was held");
+        let a: Vec<_> = [
+            &[0x90u8, 0x36, 0x7F][..],
+            &[0xB0, 0x23, 0x45],
+            &[0x90, 0x36, 0x00],
+        ]
+        .iter()
+        .filter_map(|b| d.decode(b).and_then(|e| m.map(e)))
+        .collect();
+        // Without vinyl mode the platter only bends: a touch must not stop the music.
+        assert_eq!(a, [A::PitchBend { deck: DA, ticks: 5 }]);
+    }
+
+    #[test]
+    fn switching_vinyl_off_mid_touch_releases_the_scratch() {
+        let mut d = Decoder::new();
+        let mut m = Mapper::new();
+        let e = d.decode(&[0x91, 0x36, 0x7F]).unwrap();
+        assert_eq!(
+            m.map(e),
+            Some(A::ScratchTouch {
+                deck: DB,
+                touching: true
+            })
+        );
+        assert_eq!(
+            m.set_vinyl(false),
+            [A::ScratchTouch {
+                deck: DB,
+                touching: false
+            }]
+        );
+    }
+
+    #[test]
+    fn held_touch_and_reverse_are_released_on_request() {
+        let mut d = Decoder::new();
+        let mut m = Mapper::new();
+        for b in [&[0x90u8, 0x36, 0x7F][..], &[0x91, 0x47, 0x7F]] {
+            m.map(d.decode(b).unwrap());
+        }
+        assert_eq!(
+            m.release_held(),
+            [
+                A::ScratchTouch {
+                    deck: DA,
+                    touching: false
+                },
+                A::Reverse {
+                    deck: DB,
+                    on: false
+                }
+            ]
+        );
+        assert!(m.release_held().is_empty(), "released only once");
+    }
+
+    #[test]
+    fn reverse_ends_even_if_shift_is_let_go_first() {
+        let actions = run(&[
+            &[0x91, 0x47, 0x7F], // shift + play: reverse on
+            &[0x91, 0x0B, 0x00], // play released after shift: arrives unshifted
+        ]);
+        assert_eq!(
+            actions,
+            [
+                A::Reverse { deck: DB, on: true },
+                A::Reverse {
+                    deck: DB,
+                    on: false
+                }
+            ]
+        );
+        // A plain play release without a reverse in progress stays silent.
+        assert!(run(&[&[0x90, 0x0B, 0x00]]).is_empty());
     }
 
     #[test]

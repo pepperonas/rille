@@ -202,6 +202,9 @@ struct Deck {
     meter: PeakMeter,
     declick_frames: u32,
     tail: Option<Tail>,
+    /// The tail was armed since the last render: it still holds the position that was actually
+    /// heard, so a second jump in the same block must not replace it.
+    tail_unheard: bool,
     /// Frames left of the fade-in after a start or jump.
     fade_in: u32,
     eq: Eq,
@@ -219,6 +222,7 @@ impl Deck {
             meter: PeakMeter::new(sample_rate),
             declick_frames: ((DECLICK_MS / 1000.0) * sample_rate as f32).max(1.0) as u32,
             tail: None,
+            tail_unheard: false,
             fade_in: 0,
             eq: Eq::new(sample_rate),
             filter: BipolarFilter::new(sample_rate),
@@ -239,11 +243,18 @@ impl Deck {
     fn declick(&mut self, before: Transport) {
         let after = self.transport;
         let jumped = after.position != before.position;
-        if before.playing && (!after.playing || jumped) {
+        // With keylock the player crossfades its own stretcher out and the new audio in: a tail
+        // from the raw track would not match what was just heard, and a fade-in on top would
+        // pull the outgoing stretcher audio to zero at once.
+        if self.player.owns_fade_out() {
+            return;
+        }
+        if before.playing && (!after.playing || jumped) && !self.tail_unheard {
             self.tail = Some(Tail {
                 position: before.position,
                 remaining: self.declick_frames,
             });
+            self.tail_unheard = true;
         }
         if after.playing && (!before.playing || jumped) {
             self.fade_in = self.declick_frames;
@@ -252,6 +263,7 @@ impl Deck {
 
     /// Render `frames` frames into `self.buffer`. Returns `true` when the track ended.
     fn render(&mut self, frames: usize) -> bool {
+        self.tail_unheard = false;
         let out = &mut self.buffer[..frames * 2];
         let Some(track) = &self.track else {
             out.fill(0.0);
@@ -1102,6 +1114,92 @@ mod tests {
         let s = h.snapshot().decks[0];
         assert!(s.reverse && s.rate < 0.0);
         assert!(s.position < before, "moved backwards");
+    }
+
+    /// Largest sample-to-sample step of the left channel over `blocks` blocks, including the
+    /// step from the last sample before them.
+    fn largest_step(engine: &mut Engine, blocks: usize, prev: &mut f32) -> f32 {
+        let mut out = vec![0.0; 256 * 2];
+        let mut step = 0.0f32;
+        for _ in 0..blocks {
+            engine.process(&mut out, 2);
+            for f in out.as_chunks::<2>().0 {
+                step = step.max((f[0] - *prev).abs());
+                *prev = f[0];
+            }
+        }
+        step
+    }
+
+    /// Three unrelated partials: unlike a pure sine, a phase vocoder does not reproduce this
+    /// waveform sample for sample, so a hard switch between stretched and raw audio shows up.
+    fn rich_track(seconds: usize) -> Arc<TrackAudio> {
+        let samples = (0..SR as usize * seconds)
+            .flat_map(|i| {
+                let t = i as f32 / SR as f32;
+                let v = [(110.0, 0.3), (523.0, 0.2), (1871.0, 0.1)]
+                    .iter()
+                    .map(|(f, a)| a * (t * f * std::f32::consts::TAU).sin())
+                    .sum::<f32>();
+                [v, v]
+            })
+            .collect();
+        Arc::new(TrackAudio::new(1, SR, samples))
+    }
+
+    #[test]
+    fn two_jumps_in_one_block_still_crossfade_from_what_was_heard() {
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, rich_track(30)).map_err(|_| ()).unwrap();
+        h.send(mix(MixerCommand::Crossfader(0.0)));
+        h.send(deck_a(DeckCommand::Play));
+        settle(&mut engine);
+        let mut prev = 0.0;
+        largest_step(&mut engine, 1, &mut prev);
+        let steady = largest_step(&mut engine, 8, &mut prev);
+        // 1.85 s: not a whole number of periods of the test partials, so the jump lands on a
+        // different phase (a 2 s jump would land on the same waveform and hide any click).
+        h.send(deck_a(DeckCommand::Search(37)));
+        h.send(deck_a(DeckCommand::Search(37)));
+        let across = largest_step(&mut engine, 8, &mut prev);
+        assert!(across <= steady * 1.5, "step {across} vs steady {steady}");
+    }
+
+    #[test]
+    fn leaving_keylock_does_not_click() {
+        let leave: [(&str, &[DeckCommand]); 5] = [
+            ("pause", &[DeckCommand::Pause]),
+            // 10.37 s: off the test partials' common period, so the target has another phase.
+            (
+                "cue jump",
+                &[DeckCommand::Seek {
+                    frame: 10 * SR as u64 + 17_760,
+                }],
+            ),
+            ("reverse", &[DeckCommand::Reverse(true)]),
+            ("scratch touch", &[DeckCommand::ScratchTouch(true)]),
+            ("keylock off", &[DeckCommand::Keylock(false)]),
+        ];
+        for (name, cmds) in leave {
+            let (mut engine, mut h) = engine_pair(SR, 256);
+            h.load(DeckId::A, rich_track(30)).map_err(|_| ()).unwrap();
+            h.send(mix(MixerCommand::Crossfader(0.0)));
+            h.send(deck_a(DeckCommand::Keylock(true)));
+            h.send(deck_a(DeckCommand::Tempo(0.5)));
+            h.send(deck_a(DeckCommand::Play));
+            settle(&mut engine);
+            let mut prev = 0.0;
+            largest_step(&mut engine, 1, &mut prev); // only to seed `prev`
+            let steady = largest_step(&mut engine, 8, &mut prev);
+            for c in cmds {
+                h.send(deck_a(*c));
+            }
+            let across = largest_step(&mut engine, 8, &mut prev);
+            assert!(
+                across <= steady * 1.5,
+                "{name}: step {across} vs steady {steady}"
+            );
+        }
     }
 
     #[test]

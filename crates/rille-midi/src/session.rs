@@ -66,18 +66,31 @@ impl ControllerSession {
         self.vinyl_mode
     }
 
-    /// Change vinyl mode and return the messages that tell the controller.
-    pub fn set_vinyl_mode(&mut self, on: bool, out: &mut Vec<[u8; 3]>) {
+    /// Change vinyl mode; `out` gets the messages that tell the controller. Returns the holds
+    /// this releases (a touched platter means nothing without vinyl mode).
+    pub fn set_vinyl_mode(&mut self, on: bool, out: &mut Vec<[u8; 3]>) -> Vec<ControllerAction> {
         self.vinyl_mode = on;
         out.extend(DeckId::ALL.map(|d| vinyl_mode_message(d, on)));
+        self.mapper.set_vinyl(on)
+    }
+
+    /// The controller went away: release whatever it was holding (touch, reverse), so the
+    /// engine does not stay in a scratch or play backwards until the next touch.
+    pub fn release_held(&mut self) -> Vec<ControllerAction> {
+        self.mapper.release_held()
     }
 
     /// The controller (re)connected. `adopt_positions`: take the physical positions as they are
     /// (nothing audible yet). Otherwise every absolute control must be picked up first, so a
     /// reconnect in the middle of a set never jumps a fader.
-    pub fn on_connect(&mut self, adopt_positions: bool, out: &mut Vec<[u8; 3]>) {
+    /// Returns holds left over from before (a disconnect the app did not notice in between).
+    pub fn on_connect(
+        &mut self,
+        adopt_positions: bool,
+        out: &mut Vec<[u8; 3]>,
+    ) -> Vec<ControllerAction> {
         self.decoder.reset();
-        self.mapper.reset();
+        let mut released = self.mapper.release_held();
         for t in self.takeover.values_mut() {
             t.reset();
             if adopt_positions {
@@ -86,7 +99,8 @@ impl ControllerSession {
         }
         self.leds.invalidate();
         let vinyl = self.vinyl_mode;
-        self.set_vinyl_mode(vinyl, out);
+        released.extend(self.set_vinyl_mode(vinyl, out));
+        released
     }
 
     /// Current software value of an absolute control (0..1, hardware orientation), without
@@ -141,6 +155,24 @@ mod tests {
     fn fader(session: &mut ControllerSession, deck: u8, msb: u8) -> Option<ControllerAction> {
         session.on_input(&[0xB0 | deck, 0x13, msb]);
         session.on_input(&[0xB0 | deck, 0x33, 0]).1
+    }
+
+    #[test]
+    fn reconnect_and_vinyl_off_release_a_touched_platter() {
+        let touch = ControllerAction::ScratchTouch {
+            deck: DeckId::A,
+            touching: false,
+        };
+        let mut s = ControllerSession::new();
+        s.on_connect(true, &mut Vec::new());
+        s.on_input(&[0x90, 0x36, 0x7F]);
+        // Unplugged mid-scratch and back before the app noticed.
+        assert_eq!(s.on_connect(true, &mut Vec::new()), [touch]);
+        s.on_input(&[0x90, 0x36, 0x7F]);
+        assert_eq!(s.set_vinyl_mode(false, &mut Vec::new()), [touch]);
+        s.set_vinyl_mode(true, &mut Vec::new());
+        s.on_input(&[0x90, 0x36, 0x7F]);
+        assert_eq!(s.release_held(), [touch]);
     }
 
     #[test]

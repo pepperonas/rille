@@ -86,6 +86,18 @@ Das Frontend rechnet nichts Audio-Relevantes.
   geprüft (`tests/stretch_alloc.rs`); bei einem Update der Crate diesen Test zuerst laufen lassen.
 - `JOG_TICKS_PER_REV` (player.rs) ist eine Annahme und wird bei der Hardware-Abnahme kalibriert:
   eine Tellerumdrehung muss so weit spulen wie eine Umdrehung einer Platte bei 33⅓ U/min.
+- **Keylock verlassen = Stretcher ausblenden, nicht abschneiden.** Sein Signal ist nicht
+  sampelgleich mit dem Track (Phasenvocoder); ein harter Wechsel auf die Rohdaten klickt.
+  `Player::leave_keylock` lässt ihn 4 ms weiterlaufen; solange er spielt oder ausblendet
+  (`owns_fade_out`), setzt die Engine weder Rohdaten-Tail noch Fade-in.
+- **Signalsmith würfelt:** über Streckfaktor 2 randomisiert es Phasen, Seed aus
+  `std::random_device`. Beim Hochlaufen der Rate aus ~0 (nach Reverse/Scratch) wurde die
+  Ausrichtung so zur Glückssache (Testergebnisse schwankten zwischen Läufen). Keylock greift
+  deshalb erst, wenn die Rate eingeschwungen ist (`rate_settled`).
+- **Testsignale mit Bedacht:** reiner Sinus versteckt Keylock-Klicks (der Vocoder trifft ihn
+  fast exakt) → `rich_track`; Sprünge um volle Sekunden landen bei 110/523/1871 Hz auf derselben
+  Phase und verstecken Sprungklicks → krumme Sprungweiten; periodische Klicks machen
+  Korrelationen mehrdeutig → unregelmäßige Abstände, Suchfenster < halbe Periode.
 - Tempo-Fader: in der App ist der Fader-Wert oben = 1 (wie alle Fader), Tempo oben = −1
   (langsamer, wie aufgedruckt). Umrechnung nur über `faderToTempo`/`tempoToFader`
   (`src/state/extrapolate.ts`) bzw. `tempo_to_fader` (dto.rs) – sonst kippt die Richtung.

@@ -35,6 +35,19 @@ All notable changes to rille are documented here. The format follows
   to exactly these URLs (a test mirrors the plugin's glob matching, including lookalike hosts).
 
 ### Fixed
+- Keylock: pausing, jumping, reversing, touching the platter or switching KEY off no longer
+  clicks — the stretcher fades out over 4 ms instead of being cut. After reverse or a scratch,
+  keylock re-engages only once the rate has settled, so its audio stays aligned with the
+  playhead (was up to 29 ms behind).
+- Scratch speed is measured over the last 20 ms instead of one audio block, so slow drags with
+  small buffers no longer jump between standstill and several times the real speed.
+- DDJ-200: with vinyl mode off, touching the platter no longer stops the music; switching vinyl
+  mode off or unplugging the controller mid-gesture releases a held scratch or reverse; reverse
+  also ends when Shift is let go before Play.
+- Two jumps within one audio block now crossfade from what was actually heard.
+- App: the right mouse button no longer starts a bend or reverse, holding − and + together
+  hands back to the other one on release, and a value the engine never echoes (two quick
+  toggles) no longer hides later changes from the controller.
 - Transition FX: loading or starting a track on the deck while its effect runs now cancels the
   effect (before, the new track stayed muted and was paused when the echoes ended); cancelling
   Filter-Out during its final fade no longer jumps in level.

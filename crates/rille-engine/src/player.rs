@@ -26,6 +26,11 @@ pub const BEND_PER_TICK_RATE: f32 = 0.0005;
 /// Bend while an app bend button is held.
 pub const BEND_HOLD: f32 = 0.04;
 pub const MAX_BEND: f32 = 0.5;
+/// Platter speed is measured over this much recent time. Long enough to hold several ticks
+/// even on a slow drag with small buffers, short enough to follow a scratch back and forth.
+const SCRATCH_WINDOW_S: f32 = 0.02;
+/// Blocks remembered for the speed window (64-frame blocks need 15 for 20 ms at 48 kHz).
+const SCRATCH_HISTORY: usize = 32;
 /// Seconds moved per search tick (shift + platter).
 pub const SEARCH_SECONDS_PER_TICK: f64 = 0.05;
 /// Highest playback rate the keylock input buffer is sized for (wide range plus bend).
@@ -35,6 +40,9 @@ const SCRATCH_SMOOTHING_MS: f32 = 6.0;
 const BEND_SMOOTHING_MS: f32 = 60.0;
 /// Frames over which the varispeed bridge hands over to the keylock stretcher.
 const KEYLOCK_CROSSFADE: usize = 256;
+/// Fade-out of the stretcher when keylock stops (pause, jump, reverse, scratch, KEY off), the
+/// same length as the engine's declick.
+const KEYLOCK_FADE_MS: f32 = 4.0;
 
 /// What happened at the track boundaries during a render.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -59,6 +67,9 @@ pub struct Player {
     bend_ticks: i32,
     bend_hold: i8,
     scratch_ticks: i32,
+    /// Recent blocks while scratching: (ticks, frames), newest at `scratch_head`.
+    scratch_hist: [(i32, u32); SCRATCH_HISTORY],
+    scratch_head: usize,
     was_playing: bool,
     last_rate: f32,
     stretch: Stretch,
@@ -73,6 +84,12 @@ pub struct Player {
     /// varispeed rendering bridges the gap and then crossfades into the stretched signal.
     since_engage: usize,
     bridge_pos: f64,
+    /// While > 0 the stretcher keeps running from where it was and fades out over the new
+    /// output: its audio is not sample-identical to the raw track, so a hard switch clicks.
+    fade_left: usize,
+    fade_len: usize,
+    fade_feed: f64,
+    fade_rate: f32,
 }
 
 #[inline]
@@ -81,6 +98,18 @@ fn hermite(xm1: f32, x0: f32, x1: f32, x2: f32, t: f32) -> f32 {
     let c2 = xm1 - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
     let c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
     ((c3 * t + c2) * t + c1) * t + x0
+}
+
+/// Copy track frames from `first` on into `buf` (interleaved stereo); before the start is silence.
+fn fill_input(track: &TrackAudio, first: i64, buf: &mut [f32]) {
+    for (k, frame) in buf.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+        let i = first + k as i64;
+        *frame = if i < 0 {
+            [0.0; 2]
+        } else {
+            track.frame(i as usize)
+        };
+    }
 }
 
 /// Stereo frame at a fractional position (silence outside the track).
@@ -108,6 +137,7 @@ impl Player {
         let capacity = (max_block as f32 * MAX_KEYLOCK_RATE).ceil() as usize + 4;
         let stretch = Stretch::preset_default(2, sample_rate);
         let preroll_frames = stretch.input_latency() * 2;
+        let fade_len = ((sample_rate as f32 * KEYLOCK_FADE_MS / 1000.0) as usize).max(1);
         Player {
             sample_rate,
             playhead: 0.0,
@@ -121,6 +151,8 @@ impl Player {
             bend_ticks: 0,
             bend_hold: 0,
             scratch_ticks: 0,
+            scratch_hist: [(0, 0); SCRATCH_HISTORY],
+            scratch_head: 0,
             was_playing: false,
             last_rate: 0.0,
             stretch,
@@ -131,6 +163,10 @@ impl Player {
             feed: 0.0,
             since_engage: 0,
             bridge_pos: 0.0,
+            fade_left: 0,
+            fade_len,
+            fade_feed: 0.0,
+            fade_rate: 0.0,
         }
     }
 
@@ -168,15 +204,35 @@ impl Player {
         self.range.rate(self.tempo)
     }
 
+    /// Keylock output is sounding or still fading out. The engine's declick then leaves the
+    /// fade-out to the player: a tail read from the raw track would not match what was heard.
+    pub fn owns_fade_out(&self) -> bool {
+        self.keylock_engaged || self.fade_left > 0
+    }
+
+    /// Leave keylock: let the stretcher fade out from where it is instead of cutting it.
+    fn leave_keylock(&mut self) {
+        if self.keylock_engaged {
+            self.keylock_engaged = false;
+            self.fade_left = self.fade_len;
+            self.fade_feed = self.feed;
+            self.fade_rate = self.last_rate.clamp(0.0, MAX_KEYLOCK_RATE);
+        }
+    }
+
     /// New track or a jump (cue, seek): continue from `position`.
     pub fn jump_to(&mut self, position: f64) {
         self.playhead = position.max(0.0);
-        self.keylock_engaged = false;
+        self.leave_keylock();
     }
 
     /// Fresh state for a newly loaded track (tempo, range and keylock stay, like on a CDJ).
     pub fn reset_for_track(&mut self) {
         self.jump_to(0.0);
+        // The old track is gone: nothing left to fade out.
+        self.fade_left = 0;
+        // A load during a scratch: back to tempo smoothing, as a release would do.
+        self.rate.set_time(self.sample_rate, TEMPO_SMOOTHING_MS);
         self.scratching = false;
         self.reverse = false;
         self.scratch_ticks = 0;
@@ -203,7 +259,9 @@ impl Player {
 
     pub fn set_keylock(&mut self, on: bool) {
         self.keylock = on;
-        self.keylock_engaged = false;
+        if !on {
+            self.leave_keylock();
+        }
     }
 
     pub fn bend(&mut self, ticks: i32) {
@@ -217,7 +275,8 @@ impl Player {
     pub fn scratch_touch(&mut self, touching: bool) {
         self.scratching = touching;
         self.scratch_ticks = 0;
-        self.keylock_engaged = false;
+        self.scratch_hist = [(0, 0); SCRATCH_HISTORY];
+        self.leave_keylock();
         self.rate.set_time(
             self.sample_rate,
             if touching {
@@ -241,16 +300,33 @@ impl Player {
 
     pub fn set_reverse(&mut self, on: bool) {
         self.reverse = on;
-        self.keylock_engaged = false;
+        self.leave_keylock();
     }
 
     fn update_targets(&mut self, playing: bool, frames: usize) {
         let dt = frames as f32 / self.sample_rate as f32;
         if self.scratching {
-            let ticks_per_sec = self.scratch_ticks as f32 / dt;
-            self.rate
-                .set_target(ticks_per_sec / (JOG_TICKS_PER_REV * PLATTER_REV_PER_SEC));
+            // Speed = ticks over the last ~20 ms, not over one block: on a slow drag with small
+            // buffers most blocks carry no tick, and a per-block estimate jumps between
+            // standstill and several times the real speed. No ticks in the window = held still.
+            let _ = dt;
+            self.scratch_head = (self.scratch_head + 1) % SCRATCH_HISTORY;
+            self.scratch_hist[self.scratch_head] = (self.scratch_ticks, frames as u32);
             self.scratch_ticks = 0;
+            let window = (SCRATCH_WINDOW_S * self.sample_rate as f32) as u32;
+            let (mut ticks, mut span) = (0i32, 0u32);
+            for back in 0..SCRATCH_HISTORY {
+                let (t, f) = self.scratch_hist
+                    [(self.scratch_head + SCRATCH_HISTORY - back) % SCRATCH_HISTORY];
+                ticks = ticks.saturating_add(t);
+                span = span.saturating_add(f);
+                if span >= window || f == 0 {
+                    break;
+                }
+            }
+            let seconds = span.max(1) as f32 / self.sample_rate as f32;
+            self.rate
+                .set_target(ticks as f32 / seconds / (JOG_TICKS_PER_REV * PLATTER_REV_PER_SEC));
             self.bend.set_target(0.0);
             self.bend_ticks = 0;
             return;
@@ -280,17 +356,62 @@ impl Player {
         let frames = out.len() / 2;
         self.update_targets(playing, frames);
         self.was_playing = playing;
-        let use_keylock = self.keylock
+        let wants_keylock = self.keylock
             && playing
             && !self.scratching
             && !self.reverse
             && self.rate.target() > 0.0;
-        if use_keylock {
+        if !wants_keylock {
+            self.leave_keylock();
+        }
+        // A running fade-out occupies the stretcher; keylock re-engages right after it, and only
+        // once the rate has settled (after reverse or a scratch it may still glide from far off).
+        // Fed while gliding from near zero, the stretcher works with a stretch factor above 2,
+        // where Signalsmith randomises phases (seeded from the OS) and the alignment it settles
+        // into becomes a matter of chance. Until then varispeed plays, as during the bridge.
+        let settled = self.keylock_engaged || self.rate_settled();
+        if wants_keylock && self.fade_left == 0 && settled {
             self.render_keylock(track, out)
         } else {
-            self.keylock_engaged = false;
-            self.render_varispeed(track, out)
+            let hit = self.render_varispeed(track, out);
+            if self.fade_left > 0 {
+                self.mix_fade_out(track, out);
+            }
+            hit
         }
+    }
+
+    /// The rate is within 2 % of where it is heading.
+    fn rate_settled(&self) -> bool {
+        let target = self.rate.target();
+        (self.rate.current() - target).abs() <= 0.02 * target.abs().max(0.1)
+    }
+
+    /// Crossfade from the stretcher (continuing at its last rate) into `out`.
+    fn mix_fade_out(&mut self, track: &TrackAudio, out: &mut [f32]) {
+        let frames = out.len() / 2;
+        let advance = f64::from(self.fade_rate) * frames as f64;
+        let first = self.fade_feed.floor() as i64;
+        let wanted = ((self.fade_feed + advance).floor() as i64 - first).max(0) as usize;
+        let n_in = wanted.min(self.stretch_in.len() / 2);
+        fill_input(track, first, &mut self.stretch_in[..n_in * 2]);
+        let stretched = &mut self.stretch_out[..frames * 2];
+        self.stretch
+            .process(&self.stretch_in[..n_in * 2], &mut *stretched);
+        let len = self.fade_len as f32;
+        for (k, (o, s)) in out
+            .as_chunks_mut::<2>()
+            .0
+            .iter_mut()
+            .zip(stretched.as_chunks::<2>().0)
+            .enumerate()
+        {
+            let g = self.fade_left.saturating_sub(k) as f32 / len;
+            o[0] += g * (s[0] - o[0]);
+            o[1] += g * (s[1] - o[1]);
+        }
+        self.fade_feed += advance;
+        self.fade_left = self.fade_left.saturating_sub(frames);
     }
 
     fn render_varispeed(&mut self, track: &TrackAudio, out: &mut [f32]) -> Boundaries {
@@ -325,14 +446,7 @@ impl Player {
         // Pre-roll with the input just before the feed point, so there is no silent gap.
         let preroll = self.preroll.len() / 2;
         let start = self.feed.floor() as i64 - preroll as i64;
-        for (k, frame) in self.preroll.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-            let i = start + k as i64;
-            *frame = if i < 0 {
-                [0.0; 2]
-            } else {
-                track.frame(i as usize)
-            };
-        }
+        fill_input(track, start, &mut self.preroll);
         self.stretch.seek(&self.preroll, f64::from(rate));
         self.keylock_engaged = true;
         self.since_engage = 0;
@@ -342,7 +456,10 @@ impl Player {
     fn render_keylock(&mut self, track: &TrackAudio, out: &mut [f32]) -> Boundaries {
         let frames = out.len() / 2;
         if !self.keylock_engaged {
-            let rate = self.rate.current() * (1.0 + self.bend.current());
+            // The target, not the gliding value: after reverse or a scratch the smoother may
+            // still be far off, and the feed offset must match the rate the stretcher settles at.
+            let rate =
+                (self.rate.target() * (1.0 + self.bend.target())).clamp(0.0, MAX_KEYLOCK_RATE);
             self.engage_keylock(track, rate);
         }
         let bridge_until = self.stretch.output_latency() + KEYLOCK_CROSSFADE;
@@ -351,6 +468,11 @@ impl Player {
         let mut advance = 0.0f64;
         let mut rate = 0.0;
         for frame in out.as_chunks_mut::<2>().0 {
+            // Not clamped: right after a scratch release the smoother can be far above
+            // MAX_KEYLOCK_RATE. The stretcher input is then capped (`n_in` below) and loses
+            // frames, but that happens inside the varispeed bridge, which is what is heard, and
+            // feed and playhead still advance together, so alignment holds (tested). Clamping
+            // here would instead make the record stop decelerating and drop to 2.25× at once.
             rate = self.rate.tick() * (1.0 + self.bend.tick());
             advance += f64::from(rate);
             if bridging {
@@ -363,19 +485,7 @@ impl Player {
         let first = self.feed.floor() as i64;
         let wanted = ((self.feed + advance).floor() as i64 - first).max(0) as usize;
         let n_in = wanted.min(self.stretch_in.len() / 2);
-        for (k, frame) in self.stretch_in[..n_in * 2]
-            .as_chunks_mut::<2>()
-            .0
-            .iter_mut()
-            .enumerate()
-        {
-            let i = first + k as i64;
-            *frame = if i < 0 {
-                [0.0; 2]
-            } else {
-                track.frame(i as usize)
-            };
-        }
+        fill_input(track, first, &mut self.stretch_in[..n_in * 2]);
         let stretched = &mut self.stretch_out[..frames * 2];
         self.stretch
             .process(&self.stretch_in[..n_in * 2], &mut *stretched);
@@ -603,6 +713,122 @@ mod tests {
                 "tempo {tempo}: keylock output off by {lag} samples"
             );
         }
+    }
+
+    /// Clicks at irregular intervals (50–150 ms) over a quiet tone, for alignment
+    /// measurements. Irregular, so a correlation cannot lock onto a neighbouring click.
+    fn click_track() -> TrackAudio {
+        let n = 8 * SR as usize;
+        let mut clicks = vec![false; n];
+        let (mut at, mut seed) = (0usize, 12345u32);
+        while at < n {
+            clicks[at..(at + 24).min(n)].fill(true);
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            at += 2400 + (seed >> 16) as usize % 4800;
+        }
+        let samples: Vec<f32> = (0..n)
+            .flat_map(|i| {
+                let click = if clicks[i] { 0.8 } else { 0.0 };
+                let v = click + 0.05 * (i as f32 * 220.0 * std::f32::consts::TAU / SR as f32).sin();
+                [v, v]
+            })
+            .collect();
+        TrackAudio::new(1, SR, samples)
+    }
+
+    /// Play on, after the bridge has handed over, and measure how far keylock output lags the
+    /// playhead.
+    fn lag_after(p: &mut Player, track: &TrackAudio) -> i64 {
+        play(p, track, true, 0.5);
+        let mut out = vec![0.0; 256 * 2];
+        let mut heard = Vec::new();
+        let mut expected = Vec::new();
+        // 1.5 s holds 10–30 irregular clicks; ±2400 still covers the 1380-sample error the
+        // reverse case had before the fix.
+        for _ in 0..280 {
+            let start = p.playhead();
+            let rate = f64::from(p.tempo_rate());
+            p.render(track, true, &mut out);
+            for (k, f) in out.as_chunks::<2>().0.iter().enumerate() {
+                heard.push(f[0]);
+                expected.push(sample_at(track, start + k as f64 * rate)[0]);
+            }
+        }
+        best_lag(&heard, &expected, 2400)
+    }
+
+    #[test]
+    fn steady_scratch_gives_a_steady_rate_even_with_small_blocks() {
+        let track = sine_track(440.0, 30.0);
+        // A slow drag: at 200 ticks/s most 64-frame blocks carry no tick at all.
+        for (block, tps) in [(64usize, 1000.0), (256, 1000.0), (64, 200.0), (256, 200.0)] {
+            let mut p = Player::new(SR, block);
+            p.scratch_touch(true);
+            let mut out = vec![0.0; block * 2];
+            // Ticks arrive as whole ticks per block, like MIDI messages.
+            let per_block = tps * block as f64 / f64::from(SR);
+            let mut owed = 0.0;
+            let mut rates = Vec::new();
+            for n in 0..(SR as usize / block) {
+                owed += per_block;
+                let ticks = owed.floor();
+                owed -= ticks;
+                p.scratch(ticks as i32);
+                p.render(&track, false, &mut out);
+                if n * block > SR as usize / 4 {
+                    rates.push(f64::from(p.rate()));
+                }
+            }
+            let expected = tps / f64::from(JOG_TICKS_PER_REV * PLATTER_REV_PER_SEC);
+            let worst = rates
+                .iter()
+                .map(|r| (r - expected).abs() / expected)
+                .fold(0.0, f64::max);
+            assert!(
+                worst < 0.2,
+                "block {block}, {tps} ticks/s: rate off by up to {:.0} %",
+                worst * 100.0
+            );
+        }
+    }
+
+    #[test]
+    fn keylock_stays_aligned_after_reverse_release() {
+        let track = click_track();
+        let mut p = Player::new(SR, 256);
+        p.set_range(TempoRange::Ten);
+        p.set_tempo(1.0);
+        p.set_keylock(true);
+        play(&mut p, &track, true, 1.5);
+        p.set_reverse(true);
+        play(&mut p, &track, true, 0.3);
+        p.set_reverse(false);
+        let lag = lag_after(&mut p, &track);
+        assert!(
+            lag.abs() <= 96,
+            "keylock off by {lag} samples after reverse"
+        );
+    }
+
+    #[test]
+    fn keylock_stays_aligned_after_a_fast_scratch() {
+        let track = click_track();
+        let mut p = Player::new(SR, 256);
+        p.set_keylock(true);
+        play(&mut p, &track, true, 1.5);
+        p.scratch_touch(true);
+        let mut out = vec![0.0; 256 * 2];
+        for _ in 0..20 {
+            // Far faster than the keylock input buffer is sized for.
+            p.scratch(100);
+            p.render(&track, true, &mut out);
+        }
+        p.scratch_touch(false);
+        let lag = lag_after(&mut p, &track);
+        assert!(
+            lag.abs() <= 96,
+            "keylock off by {lag} samples after scratching"
+        );
     }
 
     #[test]

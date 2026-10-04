@@ -198,7 +198,8 @@ pub fn commands_for(action: ControllerAction) -> Vec<Command> {
         A::CycleTempoRange(d) => vec![deck(d, DeckCommand::CycleTempoRange)],
         A::Tempo { deck: d, value } => vec![deck(d, DeckCommand::Tempo(value))],
         A::PitchBend { deck: d, ticks } => vec![deck(d, DeckCommand::Bend(ticks))],
-        // The mapping only reports touches while vinyl mode is on.
+        // The mapper only reports touches while vinyl mode is on, and releases them when it
+        // goes off or the controller disconnects.
         A::ScratchTouch { deck: d, touching } => {
             vec![deck(d, DeckCommand::ScratchTouch(touching))]
         }
@@ -286,7 +287,8 @@ impl Worker {
                 match request {
                     Request::SetVinyl(on) => {
                         let mut out = Vec::new();
-                        self.session.set_vinyl_mode(on, &mut out);
+                        let released = self.session.set_vinyl_mode(on, &mut out);
+                        self.send_actions(released);
                         self.send_all(&out);
                         (self.notify)(ControllerEvent::Status(self.status()));
                     }
@@ -329,8 +331,7 @@ impl Worker {
             (true, false) => self.connect(),
             (false, true) => {
                 tracing::info!("controller disconnected");
-                self.connection = None;
-                (self.notify)(ControllerEvent::Status(self.status()));
+                self.disconnected();
             }
             _ => {}
         }
@@ -349,7 +350,8 @@ impl Worker {
                 // Seed the software values first, then decide about pickup.
                 self.seed_software(&snapshot);
                 let mut out = Vec::new();
-                self.session.on_connect(!audible, &mut out);
+                let released = self.session.on_connect(!audible, &mut out);
+                self.send_actions(released);
                 self.send_all(&out);
                 (self.notify)(ControllerEvent::Status(self.status()));
             }
@@ -370,10 +372,25 @@ impl Worker {
                 .push(self.now_us(), Direction::In, bytes, meaning);
         }
         if let Some(action) = action {
+            self.send_actions([action]);
+        }
+    }
+
+    fn send_actions(&mut self, actions: impl IntoIterator<Item = ControllerAction>) {
+        for action in actions {
             for command in commands_for(action) {
                 self.engine.send(command);
             }
         }
+    }
+
+    /// The controller is gone: drop the connection and release what it was holding (a touched
+    /// platter or shift + play), otherwise the deck stays frozen or backwards.
+    fn disconnected(&mut self) {
+        self.connection = None;
+        let released = self.session.release_held();
+        self.send_actions(released);
+        (self.notify)(ControllerEvent::Status(self.status()));
     }
 
     /// Engine values for the absolute controls, used when a controller connects. Not called
@@ -425,8 +442,7 @@ impl Worker {
         }
         if failed {
             // Unplugged between polls: drop the connection; hotplug reconnects.
-            self.connection = None;
-            (self.notify)(ControllerEvent::Status(self.status()));
+            self.disconnected();
         }
     }
 }

@@ -356,7 +356,8 @@ pnpm tauri dev        # build and start the app
 | Buffer | 256 frames @ 48 kHz without dropouts | 256 frames fixed, 0 xruns (MacBook, idle) |
 | Output latency | — | 5.3 ms (buffer + device) |
 | Idle CPU | minimal | 0.2 % (debug build, nothing playing) |
-| Two decks rendering, keylock off / on | — | 0.6 % / 2.2 % of one core (release, `examples/bench_keylock.rs`) |
+| Two decks rendering, keylock off / on | — | 0.4 % / 1.9 % of one core on average (release, `examples/bench_keylock.rs`) |
+| Slowest block with keylock (spectral work comes in bursts) | within the block's time | 566 µs: 11 % of a 256-frame block, 41 % of a 64-frame block |
 | Decode + resample a 3:43 MP3 | track load < 300 ms (analysed tracks) | ~360 ms (release) — a PCM cache arrives with the library (M5) |
 | Controller → audible | < 10 ms (without device latency) | one audio block (≤ 5.3 ms) + MIDI |
 
