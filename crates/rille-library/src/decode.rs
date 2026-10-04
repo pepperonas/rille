@@ -43,6 +43,8 @@ pub enum DecodeError {
     Corrupt(String),
     #[error("Resampling fehlgeschlagen: {0}")]
     Resample(String),
+    #[error("Abgebrochen")]
+    Cancelled,
 }
 
 /// Extra room over the length the header announces: MP3 lengths are estimates.
@@ -58,92 +60,212 @@ pub fn decode_file(path: &Path, target_rate: u32, id: u64) -> Result<Arc<TrackAu
     Ok(track)
 }
 
-/// A file opened for decoding into a [`TrackAudio`] that can already be played. Opening only
-/// probes the header (milliseconds); [`DecodeStream::run`] then fills the track front to back.
-pub struct DecodeStream {
+/// Receives (source rate, interleaved stereo block).
+type BlockSink<'a> = dyn FnMut(u32, &[f32]) -> Result<(), DecodeError> + 'a;
+
+/// An opened audio file that yields interleaved stereo blocks at its own rate.
+struct Source {
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
-    source_rate: u32,
-    track: Arc<TrackAudio>,
-    resampler: Option<StreamResampler>,
+    rate: u32,
+    /// Frames the header announces, if it does.
+    announced: Option<u64>,
     /// Source frames read so far (for the length limits).
-    source_frames: u64,
-    max_source_frames: u64,
-    written: usize,
+    frames: u64,
+    max_frames: u64,
+    decode_errors: usize,
     path: PathBuf,
     /// Reused per packet.
     scratch: Vec<f32>,
+}
+
+impl Source {
+    /// Probe the header. Fails fast on unreadable, empty, unsupported or oversized files.
+    fn open(path: &Path) -> Result<Source, DecodeError> {
+        let file = File::open(path)?;
+        if file.metadata()?.len() == 0 {
+            return Err(DecodeError::Empty);
+        }
+        let mut hint = Hint::new();
+        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+            hint.with_extension(ext);
+        }
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let format = symphonia::default::get_probe()
+            .probe(
+                &hint,
+                mss,
+                FormatOptions::default(),
+                MetadataOptions::default(),
+            )
+            .map_err(|e| match e {
+                SymphoniaError::IoError(io) => DecodeError::Io(io),
+                _ => DecodeError::UnsupportedFormat,
+            })?;
+        let track = format
+            .default_track(TrackType::Audio)
+            .ok_or(DecodeError::NoAudioTrack)?;
+        let track_id = track.id;
+        let announced = track.num_frames.filter(|&n| n > 0);
+        let params = track
+            .codec_params
+            .as_ref()
+            .and_then(|p| p.audio())
+            .ok_or(DecodeError::NoAudioTrack)?
+            .clone();
+        let decoder = symphonia::default::get_codecs()
+            .make_audio_decoder(&params, &AudioDecoderOptions::default())
+            .map_err(|e| DecodeError::UnsupportedCodec(e.to_string()))?;
+        let rate = params.sample_rate.unwrap_or(0);
+        let mut source = Source {
+            format,
+            decoder,
+            track_id,
+            rate,
+            announced,
+            frames: 0,
+            max_frames: 0,
+            decode_errors: 0,
+            path: path.to_path_buf(),
+            scratch: Vec::new(),
+        };
+        if (MIN_RATE..=MAX_RATE).contains(&rate) {
+            source.max_frames = max_frames(rate);
+            if announced.is_some_and(|n| n > source.max_frames) {
+                return Err(DecodeError::TooLong);
+            }
+        }
+        Ok(source)
+    }
+
+    /// Decode the next packet of our track into `out` as interleaved stereo. `false` at the end.
+    fn next_stereo(&mut self, out: &mut Vec<f32>) -> Result<bool, DecodeError> {
+        let packet = match self.format.next_packet() {
+            Ok(Some(packet)) => packet,
+            Ok(None) => return Ok(false),
+            // A truncated file ends with an unexpected EOF: keep what we have.
+            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Ok(false);
+            }
+            Err(SymphoniaError::ResetRequired) => return Ok(false),
+            Err(e) => return Err(DecodeError::Corrupt(e.to_string())),
+        };
+        if packet.track_id != self.track_id {
+            return Ok(true);
+        }
+        let buffer = match self.decoder.decode(&packet) {
+            Ok(buffer) => buffer,
+            Err(SymphoniaError::DecodeError(_)) => {
+                // Single damaged frames are skipped, like every player does.
+                self.decode_errors += 1;
+                return Ok(true);
+            }
+            Err(e) => return Err(DecodeError::Corrupt(e.to_string())),
+        };
+        let spec = buffer.spec();
+        if self.rate == 0 {
+            self.rate = spec.rate();
+        }
+        if !(MIN_RATE..=MAX_RATE).contains(&self.rate) {
+            return Err(DecodeError::UnsupportedRate(self.rate));
+        }
+        if self.max_frames == 0 {
+            self.max_frames = max_frames(self.rate);
+        }
+        let channels = spec.channels().count().max(1);
+        self.scratch.resize(buffer.samples_interleaved(), 0.0);
+        buffer.copy_to_slice_interleaved(&mut self.scratch);
+        append_as_stereo(out, &self.scratch, channels);
+        // The header may understate the length; the limit holds regardless.
+        self.frames += (self.scratch.len() / channels) as u64;
+        if self.frames > self.max_frames {
+            return Err(DecodeError::TooLong);
+        }
+        Ok(true)
+    }
+
+    /// Feed every block (with the source rate) to `sink` until the end or until `keep_going`
+    /// says stop. Fails if not a single frame could be decoded.
+    fn pump(
+        &mut self,
+        keep_going: &mut dyn FnMut() -> bool,
+        sink: &mut BlockSink<'_>,
+    ) -> Result<(), DecodeError> {
+        let mut stereo = Vec::new();
+        let mut produced = false;
+        while keep_going() {
+            stereo.clear();
+            if !self.next_stereo(&mut stereo)? {
+                break;
+            }
+            if !stereo.is_empty() {
+                produced = true;
+                sink(self.rate, &stereo)?;
+            }
+        }
+        if self.decode_errors > 0 {
+            tracing::warn!(path = %self.path.display(), errors = self.decode_errors, "skipped damaged frames");
+        }
+        if !produced && self.decode_errors > 0 {
+            return Err(DecodeError::Corrupt(format!(
+                "{} Frames nicht dekodierbar",
+                self.decode_errors
+            )));
+        }
+        Ok(())
+    }
+}
+
+/// Stream a whole file at its own sample rate into `sink` (rate, interleaved stereo block)
+/// without keeping it in memory: what the analysis uses. Returns the frames read.
+pub fn read_blocks(
+    path: &Path,
+    mut keep_going: impl FnMut() -> bool,
+    mut sink: impl FnMut(u32, &[f32]),
+) -> Result<u64, DecodeError> {
+    let mut source = Source::open(path)?;
+    source.pump(&mut keep_going, &mut |rate, stereo| {
+        sink(rate, stereo);
+        Ok(())
+    })?;
+    if source.frames == 0 {
+        return Err(DecodeError::Empty);
+    }
+    Ok(source.frames)
+}
+
+/// A file opened for decoding into a [`TrackAudio`] that can already be played. Opening only
+/// probes the header (milliseconds); [`DecodeStream::run`] then fills the track front to back.
+pub struct DecodeStream {
+    source: Source,
+    track: Arc<TrackAudio>,
+    resampler: Option<StreamResampler>,
+    written: usize,
 }
 
 /// Open `path` for streaming decode at `target_rate`. Fails fast on unreadable, empty,
 /// unsupported or oversized files. A file whose length the header does not state is decoded
 /// completely here, so the returned track is complete.
 pub fn open_stream(path: &Path, target_rate: u32, id: u64) -> Result<DecodeStream, DecodeError> {
-    let file = File::open(path)?;
-    if file.metadata()?.len() == 0 {
-        return Err(DecodeError::Empty);
-    }
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-    let format = symphonia::default::get_probe()
-        .probe(
-            &hint,
-            mss,
-            FormatOptions::default(),
-            MetadataOptions::default(),
-        )
-        .map_err(|e| match e {
-            SymphoniaError::IoError(io) => DecodeError::Io(io),
-            _ => DecodeError::UnsupportedFormat,
-        })?;
-
-    let track = format
-        .default_track(TrackType::Audio)
-        .ok_or(DecodeError::NoAudioTrack)?;
-    let track_id = track.id;
-    let announced = track.num_frames;
-    let params = track
-        .codec_params
-        .as_ref()
-        .and_then(|p| p.audio())
-        .ok_or(DecodeError::NoAudioTrack)?
-        .clone();
-    let decoder = symphonia::default::get_codecs()
-        .make_audio_decoder(&params, &AudioDecoderOptions::default())
-        .map_err(|e| DecodeError::UnsupportedCodec(e.to_string()))?;
-
-    let source_rate = params.sample_rate.unwrap_or(0);
+    let source = Source::open(path)?;
     let mut stream = DecodeStream {
-        format,
-        decoder,
-        track_id,
-        source_rate,
         track: Arc::new(TrackAudio::new(id, target_rate, Vec::new())),
         resampler: None,
-        source_frames: 0,
-        max_source_frames: 0,
         written: 0,
-        path: path.to_path_buf(),
-        scratch: Vec::new(),
+        source,
     };
-    match announced {
-        Some(frames) if (MIN_RATE..=MAX_RATE).contains(&source_rate) && frames > 0 => {
-            stream.max_source_frames = max_frames(source_rate);
-            if frames > stream.max_source_frames {
-                return Err(DecodeError::TooLong);
-            }
-            let expected = converted_len(frames as usize, source_rate, target_rate);
+    let rate = stream.source.rate;
+    match stream.source.announced {
+        Some(frames) if (MIN_RATE..=MAX_RATE).contains(&rate) => {
+            let expected = converted_len(frames as usize, rate, target_rate);
             let margin = (expected as f64 * CAPACITY_MARGIN) as usize
                 + (CAPACITY_MARGIN_SECONDS * u64::from(target_rate)) as usize;
             let capacity = (expected + margin).min(max_frames(target_rate) as usize);
             stream.track = Arc::new(TrackAudio::streaming(id, target_rate, expected, capacity));
-            if source_rate != target_rate {
+            if rate != target_rate {
                 stream.resampler = Some(
-                    StreamResampler::new(source_rate, target_rate)
+                    StreamResampler::new(rate, target_rate)
                         .map_err(|e| DecodeError::Resample(e.to_string()))?,
                 );
             }
@@ -151,11 +273,22 @@ pub fn open_stream(path: &Path, target_rate: u32, id: u64) -> Result<DecodeStrea
         }
         // Length or rate unknown: nothing to size the buffer by, decode it all now.
         _ => {
-            let stereo = stream.decode_all()?;
-            let samples = if stream.source_rate == target_rate {
+            let mut stereo = Vec::new();
+            stream.source.pump(&mut || true, &mut |_, block| {
+                stereo.extend_from_slice(block);
+                Ok(())
+            })?;
+            if stereo.is_empty() {
+                return Err(DecodeError::Empty);
+            }
+            let rate = stream.source.rate;
+            if !(MIN_RATE..=MAX_RATE).contains(&rate) {
+                return Err(DecodeError::UnsupportedRate(rate));
+            }
+            let samples = if rate == target_rate {
                 stereo
             } else {
-                resample_stereo(&stereo, stream.source_rate, target_rate)
+                resample_stereo(&stereo, rate, target_rate)
                     .map_err(|e| DecodeError::Resample(e.to_string()))?
             };
             stream.track = Arc::new(TrackAudio::new(id, target_rate, samples));
@@ -182,7 +315,18 @@ impl DecodeStream {
         if self.track.is_complete() {
             return Ok(()); // decoded completely in `open_stream`
         }
-        let result = self.fill(&mut keep_going);
+        let (track, written, resampler) = (&self.track, &mut self.written, &mut self.resampler);
+        let result = self
+            .source
+            .pump(&mut keep_going, &mut |_, stereo| match resampler.as_mut() {
+                Some(r) => r
+                    .push(stereo, &mut |out| *written += track.write(*written, out))
+                    .map_err(|e| DecodeError::Resample(e.to_string())),
+                None => {
+                    *written += track.write(*written, stereo);
+                    Ok(())
+                }
+            });
         if let Some(resampler) = self.resampler.take() {
             let (track, written) = (&self.track, &mut self.written);
             let _ = resampler.finish(&mut |out| *written += track.write(*written, out));
@@ -192,103 +336,6 @@ impl DecodeStream {
             return Err(DecodeError::Empty);
         }
         result
-    }
-
-    fn fill(&mut self, keep_going: &mut dyn FnMut() -> bool) -> Result<(), DecodeError> {
-        let mut stereo = Vec::new();
-        let mut decode_errors = 0usize;
-        while keep_going() {
-            stereo.clear();
-            match self.next_stereo(&mut stereo, &mut decode_errors)? {
-                false => break,
-                true if stereo.is_empty() => continue,
-                true => {}
-            }
-            let (track, written) = (&self.track, &mut self.written);
-            match self.resampler.as_mut() {
-                Some(r) => r
-                    .push(&stereo, &mut |out| *written += track.write(*written, out))
-                    .map_err(|e| DecodeError::Resample(e.to_string()))?,
-                None => *written += track.write(*written, &stereo),
-            }
-        }
-        if decode_errors > 0 {
-            tracing::warn!(path = %self.path.display(), decode_errors, "skipped damaged frames");
-        }
-        if self.written == 0 && decode_errors > 0 {
-            return Err(DecodeError::Corrupt(format!(
-                "{decode_errors} Frames nicht dekodierbar"
-            )));
-        }
-        Ok(())
-    }
-
-    /// Decode the next packet of our track into `out` as interleaved stereo. `false` at the end.
-    fn next_stereo(
-        &mut self,
-        out: &mut Vec<f32>,
-        decode_errors: &mut usize,
-    ) -> Result<bool, DecodeError> {
-        let packet = match self.format.next_packet() {
-            Ok(Some(packet)) => packet,
-            Ok(None) => return Ok(false),
-            // A truncated file ends with an unexpected EOF: keep what we have.
-            Err(SymphoniaError::IoError(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Ok(false);
-            }
-            Err(SymphoniaError::ResetRequired) => return Ok(false),
-            Err(e) => return Err(DecodeError::Corrupt(e.to_string())),
-        };
-        if packet.track_id != self.track_id {
-            return Ok(true);
-        }
-        let buffer = match self.decoder.decode(&packet) {
-            Ok(buffer) => buffer,
-            Err(SymphoniaError::DecodeError(_)) => {
-                // Single damaged frames are skipped, like every player does.
-                *decode_errors += 1;
-                return Ok(true);
-            }
-            Err(e) => return Err(DecodeError::Corrupt(e.to_string())),
-        };
-        let spec = buffer.spec();
-        if self.source_rate == 0 {
-            self.source_rate = spec.rate();
-        }
-        if !(MIN_RATE..=MAX_RATE).contains(&self.source_rate) {
-            return Err(DecodeError::UnsupportedRate(self.source_rate));
-        }
-        if self.max_source_frames == 0 {
-            self.max_source_frames = max_frames(self.source_rate);
-        }
-        let channels = spec.channels().count().max(1);
-        self.scratch.resize(buffer.samples_interleaved(), 0.0);
-        buffer.copy_to_slice_interleaved(&mut self.scratch);
-        append_as_stereo(out, &self.scratch, channels);
-        // The header may understate the length; the limit holds regardless.
-        self.source_frames += (self.scratch.len() / channels) as u64;
-        if self.source_frames > self.max_source_frames {
-            return Err(DecodeError::TooLong);
-        }
-        Ok(true)
-    }
-
-    /// Whole file as interleaved stereo at the source rate (length unknown up front).
-    fn decode_all(&mut self) -> Result<Vec<f32>, DecodeError> {
-        let mut stereo = Vec::new();
-        let mut decode_errors = 0usize;
-        while self.next_stereo(&mut stereo, &mut decode_errors)? {}
-        if stereo.is_empty() {
-            return Err(if decode_errors > 0 {
-                DecodeError::Corrupt(format!("{decode_errors} Frames nicht dekodierbar"))
-            } else {
-                DecodeError::Empty
-            });
-        }
-        if !(MIN_RATE..=MAX_RATE).contains(&self.source_rate) {
-            return Err(DecodeError::UnsupportedRate(self.source_rate));
-        }
-        Ok(stereo)
     }
 }
 

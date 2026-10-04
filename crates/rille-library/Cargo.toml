@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 rille-core.workspace = true
+realfft = "3"
 rubato = "5"
 symphonia = { version = "0.6", default-features = false, features = ["mp3", "aac", "alac", "flac", "pcm", "wav", "aiff", "isomp4", "opt-simd", "id3v2", "id3v1"] }
 thiserror = "2"

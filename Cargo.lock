@@ -3304,6 +3304,7 @@ dependencies = [
 name = "rille-library"
 version = "0.1.0"
 dependencies = [
+ "realfft",
  "rille-core",
  "rubato",
  "symphonia",

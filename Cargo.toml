@@ -34,6 +34,10 @@ unreachable = "deny"
 [profile.dev.package."*"]
 opt-level = 2
 
+# Analysis tests run real FFT work; unoptimised they take ~20 s.
+[profile.dev.package.rille-library]
+opt-level = 2
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

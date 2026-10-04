@@ -1,54 +1,14 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)] // test code
 
-use std::f32::consts::TAU;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use rille_library::decode::open_stream;
 use rille_library::{DecodeError, decode_file};
 use tempfile::TempDir;
 
-/// Minimal 16-bit PCM WAV writer for test fixtures. `declared_frames` lets a test lie in the
-/// header to simulate truncated files.
-fn write_wav(path: &Path, rate: u32, channels: u16, samples: &[f32], declared_frames: Option<u32>) {
-    let frames = (samples.len() / channels as usize) as u32;
-    let data_len = declared_frames.unwrap_or(frames) * u32::from(channels) * 2;
-    let mut f = std::fs::File::create(path).unwrap();
-    let block_align = channels * 2;
-    f.write_all(b"RIFF").unwrap();
-    f.write_all(&(36 + data_len).to_le_bytes()).unwrap();
-    f.write_all(b"WAVEfmt ").unwrap();
-    f.write_all(&16u32.to_le_bytes()).unwrap();
-    f.write_all(&1u16.to_le_bytes()).unwrap();
-    f.write_all(&channels.to_le_bytes()).unwrap();
-    f.write_all(&rate.to_le_bytes()).unwrap();
-    f.write_all(&(rate * u32::from(block_align)).to_le_bytes())
-        .unwrap();
-    f.write_all(&block_align.to_le_bytes()).unwrap();
-    f.write_all(&16u16.to_le_bytes()).unwrap();
-    f.write_all(b"data").unwrap();
-    f.write_all(&data_len.to_le_bytes()).unwrap();
-    for s in samples {
-        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
-        f.write_all(&v.to_le_bytes()).unwrap();
-    }
-}
+mod common;
+use common::{fixture, sine, write_wav};
 
-fn sine(rate: u32, freq: f32, seconds: f32, channels: usize) -> Vec<f32> {
-    let n = (rate as f32 * seconds) as usize;
-    (0..n)
-        .flat_map(|i| {
-            let v = 0.5 * (i as f32 * freq * TAU / rate as f32).sin();
-            std::iter::repeat_n(v, channels)
-        })
-        .collect()
-}
-
-fn fixture(dir: &TempDir, name: &str) -> PathBuf {
-    dir.path().join(name)
-}
-
-/// Estimate frequency from rising zero crossings of the left channel.
 fn frequency(samples: &[f32], rate: u32) -> f32 {
     let left: Vec<f32> = samples.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
     // skip resampler edges
