@@ -1,0 +1,5 @@
+.meter {
+  width: calc(var(--size-meter) * 2 + var(--stroke-thick));
+  height: 100%;
+  min-height: var(--size-fader-min-length);
+}

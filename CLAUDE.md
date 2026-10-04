@@ -10,7 +10,8 @@ Teilplan im selben Ordner).
 ```bash
 pnpm install                 # Frontend-Abhängigkeiten (inkl. lokaler tauri-cli)
 pnpm tauri dev               # App starten (Vite auf :1420 + Rust)
-pnpm dev:web                 # nur Frontend im Browser (Mock-Backend, ab M1)
+pnpm dev                     # nur Frontend im Browser (Mock-Backend simuliert zwei Decks)
+pnpm e2e                     # Playwright gegen das Mock-Backend (System-Chrome)
 pnpm tokens                  # Farb-Tokens neu erzeugen nach Seed-Änderung
 pnpm check                   # alles: typecheck, lint, vitest, rustfmt, clippy, cargo test
 pnpm tauri build             # .app/.dmg (unsigniert)
@@ -51,3 +52,17 @@ Das Frontend rechnet nichts Audio-Relevantes.
   Vibrancy-Grund das helle System-Theme durch.
 - Screenshot des Fensters: `kCGWindowName == 'rille'` suchen (Tauri legt mehrere unsichtbare
   Hilfsfenster an), dann `screencapture -l <id>`.
+- **Integrationstests/Beispiele** (`tests/*.rs`, `examples/*.rs`) gelten für Clippy nicht als
+  Testcode: dort `#![allow(clippy::unwrap_used, ...)]` auf Dateiebene.
+- Clippy 1.98 verlangt `as_chunks::<N>()` statt `chunks_exact(N)` bei konstanter Größe.
+- React StrictMode ruft Effekte doppelt auf: Abmeldungen dürfen nur den **eigenen** Empfänger
+  entfernen (siehe `mock.ts`), sonst killt die verworfene erste Verbindung die zweite.
+- `assert_no_alloc` im Test mit Feature `warn_debug` (zählt statt abzubrechen); die App selbst
+  bricht im Debug-Build bei einer Allokation im Callback ab. Gegenprobe steht im Test.
+- Engine-Rate wird einmal beim Start gewählt (48 kHz bevorzugt, sonst 44,1 kHz); Geräte ohne
+  diese Rate melden einen klaren Fehler statt die Engine neu zu bauen.
+- Fenster-Screenshot: liegt rille hinter einem anderen Fenster oder auf dem zweiten Monitor,
+  scheitert `screencapture -l`; dann nicht fremde Fenster abfotografieren, sondern über das
+  Mock-Frontend im Browser prüfen.
+- Dekodieren einer 3:43-MP3 dauert ~360 ms (Release) – für die 300-ms-Ladezeit braucht M5 einen
+  PCM-Cache.

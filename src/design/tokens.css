@@ -76,6 +76,14 @@
   --size-icon-button: 32px;
   --size-badge: 32px;
   --size-dialog-min: 320px;
+  --size-dialog-wide: 520px;
+  --size-fader-thickness: 28px;
+  --size-fader-rail: 6px;
+  --size-fader-handle: 14px;
+  --size-fader-min-length: 120px;
+  --size-play-button: 72px;
+  --size-transport-button: 56px;
+  --size-meter: 8px;
 
   /* Strokes */
   --stroke-hairline: 1px;

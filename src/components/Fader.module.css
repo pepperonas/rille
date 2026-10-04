@@ -1,0 +1,111 @@
+/* Track, filled part in the surrounding accent (--accent, falls back to primary) and a pill
+   handle. Position comes from --fader-value (0..1) set inline. */
+.fader {
+  --_accent: var(--accent, var(--md-primary));
+  position: relative;
+  touch-action: none;
+  cursor: grab;
+  outline: none;
+  border-radius: var(--shape-full);
+}
+
+.fader[data-dragging] {
+  cursor: grabbing;
+}
+
+.fader:focus-visible {
+  outline: var(--stroke-thick) solid var(--md-primary);
+  outline-offset: var(--space-1);
+}
+
+.fader[data-orientation='vertical'] {
+  width: var(--size-fader-thickness);
+  height: 100%;
+  min-height: var(--size-fader-min-length);
+}
+
+.fader[data-orientation='horizontal'] {
+  width: 100%;
+  height: var(--size-fader-thickness);
+}
+
+.rail {
+  position: absolute;
+  border-radius: var(--shape-full);
+  background: var(--md-surface-container-highest);
+  overflow: hidden;
+}
+
+.fader[data-orientation='vertical'] .rail {
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: var(--size-fader-rail);
+  transform: translateX(-50%);
+}
+
+.fader[data-orientation='horizontal'] .rail {
+  top: 50%;
+  left: 0;
+  right: 0;
+  height: var(--size-fader-rail);
+  transform: translateY(-50%);
+}
+
+.fill {
+  position: absolute;
+  background: var(--_accent);
+}
+
+.fader[data-orientation='vertical'] .fill {
+  left: 0;
+  right: 0;
+  bottom: calc(var(--fader-start) * 100%);
+  top: calc((1 - var(--fader-end)) * 100%);
+}
+
+.fader[data-orientation='horizontal'] .fill {
+  top: 0;
+  bottom: 0;
+  left: calc(var(--fader-start) * 100%);
+  right: calc((1 - var(--fader-end)) * 100%);
+}
+
+.handle {
+  position: absolute;
+  border-radius: var(--shape-full);
+  background: var(--md-on-surface);
+  box-shadow: 0 0 0 var(--space-1) var(--md-surface-container);
+  transition:
+    transform var(--motion-duration-short) var(--motion-easing-spatial-fast),
+    background-color var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.fader[data-orientation='vertical'] .handle {
+  left: 50%;
+  width: var(--size-fader-thickness);
+  height: var(--size-fader-handle);
+  bottom: calc(var(--fader-value) * (100% - var(--size-fader-handle)));
+  transform: translateX(-50%);
+}
+
+.fader[data-orientation='horizontal'] .handle {
+  top: 50%;
+  height: var(--size-fader-thickness);
+  width: var(--size-fader-handle);
+  left: calc(var(--fader-value) * (100% - var(--size-fader-handle)));
+  transform: translateY(-50%);
+}
+
+.fader:hover .handle,
+.fader[data-dragging] .handle {
+  background: var(--_accent);
+}
+
+.fader[data-orientation='vertical'][data-dragging] .handle {
+  transform: translateX(-50%) scaleX(1.15);
+}
+
+.fader[data-orientation='horizontal'][data-dragging] .handle {
+  transform: translateY(-50%) scaleY(1.15);
+}

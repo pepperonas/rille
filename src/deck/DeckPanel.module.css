@@ -69,3 +69,58 @@
   font: var(--type-body-m);
   color: var(--md-on-surface-variant);
 }
+
+.empty[data-status='error'] {
+  border-color: var(--md-error);
+}
+
+.empty[data-status='error'] .emptyTitle {
+  color: var(--md-error);
+}
+
+.eject {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: var(--size-icon-button);
+  height: var(--size-icon-button);
+  border: 0;
+  border-radius: var(--shape-full);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+}
+
+.eject:hover {
+  background: color-mix(in srgb, var(--md-on-surface) calc(var(--state-hover) * 100%), transparent);
+}
+
+.loaded {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-6);
+  margin-top: var(--space-4);
+  min-height: 0;
+}
+
+.title {
+  margin: 0;
+  font: var(--type-headline-s);
+  font-stretch: var(--font-stretch-emphasized);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.demo {
+  margin-top: var(--space-4);
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: var(--space-2) var(--space-5);
+  background: var(--accent-container);
+  color: var(--on-accent-container);
+  font: var(--type-label-l);
+  cursor: pointer;
+}

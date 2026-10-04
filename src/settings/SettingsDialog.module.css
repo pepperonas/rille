@@ -1,0 +1,60 @@
+.dialog {
+  border: 0;
+  border-radius: var(--shape-xl);
+  padding: var(--space-6);
+  min-width: var(--size-dialog-min);
+  width: min(90vw, var(--size-dialog-wide));
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface);
+}
+
+.dialog::backdrop {
+  background: color-mix(in srgb, var(--md-scrim) 50%, transparent);
+}
+
+.title {
+  margin: 0 0 var(--space-4);
+  font: var(--type-headline-s);
+  font-stretch: var(--font-stretch-emphasized);
+}
+
+.body,
+.version {
+  margin: 0 0 var(--space-2);
+  font: var(--type-body-m);
+  color: var(--md-on-surface-variant);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-6);
+}
+
+.textButton {
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  color: var(--md-primary);
+  font: var(--type-label-l);
+  cursor: pointer;
+}
+
+.textButton:hover {
+  background: color-mix(in srgb, var(--md-primary) calc(var(--state-hover) * 100%), transparent);
+}
+
+.footer {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: var(--stroke-hairline) solid var(--md-outline-variant);
+  font: var(--type-body-s);
+  color: var(--md-on-surface-variant);
+}
+
+.section {
+  margin: 0 0 var(--space-3);
+  font: var(--type-title-s);
+  color: var(--md-primary);
+}

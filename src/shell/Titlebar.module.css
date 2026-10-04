@@ -37,3 +37,32 @@
   border-radius: var(--shape-md);
   background: color-mix(in srgb, var(--md-on-surface) calc(var(--state-pressed) * 100%), transparent);
 }
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: var(--space-1) var(--space-3);
+  background: var(--md-error-container);
+  color: var(--md-on-error-container);
+  font: var(--type-label-m);
+  cursor: pointer;
+}
+
+.status[data-ok] {
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface-variant);
+}
+
+.dot {
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--shape-full);
+  background: var(--md-error);
+}
+
+.status[data-ok] .dot {
+  background: var(--md-primary);
+}

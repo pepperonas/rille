@@ -28,3 +28,17 @@ export const springs = {
 export function dampingRatio(token: SpringToken, mass = 1): number {
   return token.damping / (2 * Math.sqrt(token.stiffness * mass));
 }
+
+/** Sizes JS needs as numbers (shape morphs). Mirrors tokens.css; a test keeps them in sync. */
+export const sizes = {
+  playButton: 72,
+  transportButton: 56,
+} as const;
+
+/** Corner radii in px. Mirrors the --shape-* tokens. */
+export const shapes = {
+  md: 12,
+  lg: 16,
+  lgInc: 20,
+  xl: 28,
+} as const;

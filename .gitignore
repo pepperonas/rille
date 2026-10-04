@@ -12,3 +12,6 @@ temp/
 
 # Pioneer DJ document, copyrighted: keep locally, do not redistribute
 docs/ddj-200_midi_message_list.pdf
+.playwright-mcp/
+playwright-report/
+test-results/

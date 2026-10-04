@@ -4,7 +4,8 @@ Native DJ-App für macOS mit Unterstützung für den **Pioneer DDJ-200**. Gebaut
 einer Echtzeit-Audio-Engine in Rust und einer React-Oberfläche nach Material 3 Expressive.
 Voll bedienbar auch ohne Controller, per Maus und Tastatur.
 
-> Status: in Entwicklung (Meilenstein M0 – Fundament). Noch nicht spielbar.
+> Status: in Entwicklung (M1 – Engine-Kern). Zwei Decks spielen Dateien aus dem Finder, mit
+> Cue, Kanalfadern, Crossfader und Pegeln. Controller, Library und Waveforms folgen.
 
 ## Voraussetzungen
 
@@ -18,6 +19,8 @@ Voll bedienbar auch ohne Controller, per Maus und Tastatur.
 pnpm install
 pnpm tauri dev      # App starten
 pnpm check          # alle Tests und Linter
+pnpm dev            # Oberfläche im Browser mit simuliertem Backend
+pnpm e2e            # Browser-Tests
 ```
 
 ## Architektur
