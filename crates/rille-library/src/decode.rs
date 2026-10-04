@@ -13,8 +13,14 @@ use symphonia::core::meta::MetadataOptions;
 
 use crate::resample::resample_stereo;
 
-/// Longest track we accept (2 h). Prevents a broken length header from exhausting memory.
-pub const MAX_SECONDS: u64 = 2 * 60 * 60;
+/// Longest track we accept (1 h at the source rate).
+pub const MAX_SECONDS: u64 = 60 * 60;
+/// Absolute cap on decoded stereo frames regardless of rate (~1.5 GB as f32). Together with
+/// `MAX_SECONDS` this keeps a malicious or broken file from exhausting memory.
+pub const MAX_FRAMES: u64 = 200_000_000;
+/// Sample rates outside this range are rejected before anything is allocated for them.
+pub const MIN_RATE: u32 = 8_000;
+pub const MAX_RATE: u32 = 384_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DecodeError {
@@ -28,8 +34,10 @@ pub enum DecodeError {
     UnsupportedCodec(String),
     #[error("Die Datei enthält keine Audiodaten")]
     Empty,
-    #[error("Track ist länger als {} Stunden", MAX_SECONDS / 3600)]
+    #[error("Track ist länger als {} Minuten", MAX_SECONDS / 60)]
     TooLong,
+    #[error("Abtastrate {0} Hz wird nicht unterstützt")]
+    UnsupportedRate(u32),
     #[error("Datei ist beschädigt: {0}")]
     Corrupt(String),
     #[error("Resampling fehlgeschlagen: {0}")]
@@ -110,7 +118,10 @@ pub fn decode_file(path: &Path, target_rate: u32, id: u64) -> Result<TrackAudio,
         buffer.copy_to_slice_interleaved(&mut scratch);
         append_as_stereo(&mut stereo, &scratch, channels);
 
-        let max_frames = MAX_SECONDS * u64::from(source_rate.max(1));
+        if !(MIN_RATE..=MAX_RATE).contains(&source_rate) {
+            return Err(DecodeError::UnsupportedRate(source_rate));
+        }
+        let max_frames = (MAX_SECONDS * u64::from(source_rate)).min(MAX_FRAMES);
         if (stereo.len() / 2) as u64 > max_frames {
             return Err(DecodeError::TooLong);
         }
@@ -126,8 +137,8 @@ pub fn decode_file(path: &Path, target_rate: u32, id: u64) -> Result<TrackAudio,
     if decode_errors > 0 {
         tracing::warn!(path = %path.display(), decode_errors, "skipped damaged frames");
     }
-    if source_rate == 0 {
-        return Err(DecodeError::Corrupt("unbekannte Abtastrate".into()));
+    if !(MIN_RATE..=MAX_RATE).contains(&source_rate) {
+        return Err(DecodeError::UnsupportedRate(source_rate));
     }
 
     let samples = if source_rate == target_rate {
