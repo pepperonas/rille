@@ -175,3 +175,7 @@
     animation: none;
   }
 }
+
+.fxButton:disabled {
+  cursor: default;
+}

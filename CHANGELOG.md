@@ -26,6 +26,13 @@ All notable changes to rille are documented here. The format follows
   to exactly these URLs (a test mirrors the plugin's glob matching, including lookalike hosts).
 
 ### Fixed
+- Transition FX: loading or starting a track on the deck while its effect runs now cancels the
+  effect (before, the new track stayed muted and was paused when the echoes ended); cancelling
+  Filter-Out during its final fade no longer jumps in level.
+- Knobs and faders step from the last value sent, so key repeat and trackpad scrolling
+  accumulate; the wheel is scaled by gesture size and no longer scrolls the mixer; EQ kill
+  survives quick double clicks; the Transition FX button shows when a cancelled effect is only
+  decaying.
 - MIDI monitor: the view now subscribes before switching the stream on, so the first batch of
   messages is no longer lost.
 

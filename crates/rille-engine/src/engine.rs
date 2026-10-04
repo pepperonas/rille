@@ -476,6 +476,8 @@ impl Engine {
     }
 
     fn install_track(&mut self, load: TrackLoad) {
+        // New material on the deck: a running transition on it lets go (no muting, no pause).
+        self.transition.release_deck(load.deck);
         let deck = &mut self.decks[load.deck.index()];
         let track_id = load.track.id;
         deck.transport = Transport::new(load.track.frames() as u64);
@@ -521,6 +523,7 @@ impl Engine {
 
     fn apply_deck(&mut self, id: DeckId, cmd: DeckCommand) {
         if cmd == DeckCommand::Unload {
+            self.transition.release_deck(id);
             let deck = &mut self.decks[id.index()];
             deck.transport = Transport::new(0);
             let old = deck.track.take();
@@ -541,7 +544,13 @@ impl Engine {
             DeckCommand::Seek { frame } => t.seek(frame),
             DeckCommand::Unload => {}
         }
+        let started = deck.transport.playing && !before.playing;
         deck.declick(before);
+        // Starting the deck again (play, cue preview) means the DJ wants to hear it: a running
+        // transition on it lets go instead of muting and later pausing the new playback.
+        if started {
+            self.transition.release_deck(id);
+        }
     }
 
     fn apply_mixer(&mut self, cmd: MixerCommand) {
@@ -995,6 +1004,50 @@ mod tests {
         assert!(s.decks[0].playing);
         assert_eq!(s.transition.deck, None);
         assert!(s.master_peak[0] > 0.3, "dry signal back");
+    }
+
+    #[test]
+    fn loading_a_new_track_during_echo_out_keeps_it_audible_and_playing() {
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, sine_track(1, 30))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(deck_a(DeckCommand::Play));
+        settle(&mut engine);
+        h.send(mix(MixerCommand::TransitionFx));
+        settle(&mut engine); // dry faded out
+        h.load(DeckId::A, sine_track(2, 30))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(deck_a(DeckCommand::Play));
+        let mut out = vec![0.0; 256 * 2];
+        for _ in 0..(10 * SR as usize / 256) {
+            engine.process(&mut out, 2);
+        }
+        let s = h.snapshot();
+        assert_eq!(s.decks[0].track_id, Some(2));
+        assert!(
+            s.decks[0].playing,
+            "the new track was not paused by the old effect"
+        );
+        assert!(s.decks[0].peak[0] > 0.3, "and it is audible");
+        assert_eq!(s.transition.deck, None);
+    }
+
+    #[test]
+    fn restarting_a_deck_during_echo_out_cancels_it() {
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, sine_track(1, 30))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(deck_a(DeckCommand::Play));
+        settle(&mut engine);
+        h.send(mix(MixerCommand::TransitionFx));
+        engine.process(&mut [0.0; 512], 2);
+        h.send(deck_a(DeckCommand::Pause));
+        h.send(deck_a(DeckCommand::Play));
+        engine.process(&mut [0.0; 512], 2);
+        assert!(h.snapshot().transition.releasing);
     }
 
     #[test]

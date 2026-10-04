@@ -173,3 +173,15 @@ for (const [width, height] of [
     expect(fx.y + fx.height).toBeLessThanOrEqual(mixer.y + mixer.height);
   });
 }
+
+test('quick repeated input accumulates instead of getting lost', async ({ page }) => {
+  await page.goto('/?demo');
+  await expect(deck(page, 'a').getByRole('heading')).toBeVisible();
+  const kill = page.getByRole('button', { name: 'Höhen Kanal 2 stummschalten (Kill)' });
+  await kill.dblclick();
+  await expect(kill).toHaveAttribute('aria-pressed', 'false');
+  const mid = page.getByRole('slider', { name: 'Mitten Kanal 1' });
+  await mid.focus();
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowUp', { delay: 0 });
+  await expect(mid).toHaveAttribute('aria-valuenow', '60');
+});

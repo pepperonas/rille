@@ -5,6 +5,7 @@ import { Knob } from '../components/Knob';
 import { Meter } from '../components/Meter';
 import type { AppState } from '../state/store';
 import { useAppState } from '../state/store';
+import { useOptimistic } from '../state/useOptimistic';
 import { TRANSITION_NAMES, eqText, filterText } from './valueText';
 import styles from './MixerPanel.module.css';
 
@@ -24,6 +25,40 @@ const BANDS: { band: Band; index: number; caption: string; name: string }[] = [
   { band: 'low', index: 0, caption: 'LOW', name: 'Bässe' },
 ];
 
+interface EqKnobProps {
+  deck: Deck;
+  band: Band;
+  caption: string;
+  name: string;
+  channel: string;
+  value: number;
+  killed: boolean;
+}
+
+/** One EQ band; the caption toggles kill. Optimistic, so a quick double click toggles twice. */
+function EqKnob({ deck, band, caption, name, channel, value, killed }: EqKnobProps) {
+  const kill = useOptimistic(killed);
+  return (
+    <Knob
+      label={`${name} ${channel}`}
+      caption={caption}
+      value={value}
+      muted={kill.shown}
+      valueText={eqText(value, kill.shown)}
+      onChange={(v) => backend.mixer({ type: 'eq', deck, band, value: v })}
+      captionToggle={{
+        label: `${name} ${channel} stummschalten (Kill)`,
+        pressed: kill.shown,
+        onToggle: () => {
+          const next = !kill.current();
+          kill.set(next);
+          backend.mixer({ type: 'eqKill', deck, band, kill: next });
+        },
+      }}
+    />
+  );
+}
+
 function Channel({ deck }: { deck: Deck }) {
   const i = deck === 'a' ? 0 : 1;
   const fader = useAppState((s) => s.frame?.channelFader[i] ?? 1);
@@ -35,26 +70,18 @@ function Channel({ deck }: { deck: Deck }) {
     <div className={styles.channel} data-deck={deck}>
       <span className={styles.channelLabel}>{deck === 'a' ? '1' : '2'}</span>
       <div className={styles.knobs}>
-        {BANDS.map(({ band, index, caption, name }) => {
-          const killed = kill?.[index] ?? false;
-          const v = eq?.[index] ?? 0.5;
-          return (
-            <Knob
-              key={band}
-              label={`${name} ${label}`}
-              caption={caption}
-              value={v}
-              muted={killed}
-              valueText={eqText(v, killed)}
-              onChange={(value) => backend.mixer({ type: 'eq', deck, band, value })}
-              captionToggle={{
-                label: `${name} ${label} stummschalten (Kill)`,
-                pressed: killed,
-                onToggle: () => backend.mixer({ type: 'eqKill', deck, band, kill: !killed }),
-              }}
-            />
-          );
-        })}
+        {BANDS.map(({ band, index, caption, name }) => (
+          <EqKnob
+            key={band}
+            deck={deck}
+            band={band}
+            caption={caption}
+            name={name}
+            channel={label}
+            value={eq?.[index] ?? 0.5}
+            killed={kill?.[index] ?? false}
+          />
+        ))}
         <Knob
           label={`Filter ${label}`}
           caption="FILTER"
@@ -80,6 +107,7 @@ function TransitionFx() {
   const t = useAppState((s) => s.frame?.transition);
   const kind = t?.kind ?? 'echoOut';
   const running = !!t?.deck;
+  const releasing = !!t?.releasing;
   const deckLabel = t?.deck === 'a' ? 'Deck 1' : t?.deck === 'b' ? 'Deck 2' : null;
   return (
     <div className={styles.transition}>
@@ -87,18 +115,23 @@ function TransitionFx() {
         type="button"
         className={styles.fxButton}
         data-running={running || undefined}
-        data-releasing={t?.releasing || undefined}
+        data-releasing={releasing || undefined}
         aria-pressed={running}
+        disabled={releasing}
         aria-label={`Transition FX: ${TRANSITION_NAMES[kind]}${deckLabel ? ` auf ${deckLabel}` : ''}`}
         title={
-          running
-            ? 'Nochmal drücken bricht ab'
-            : 'Blendet das lautere spielende Deck aus und pausiert es danach'
+          releasing
+            ? 'Abgebrochen – der Nachhall klingt aus'
+            : running
+              ? 'Nochmal drücken bricht ab'
+              : 'Blendet das lautere spielende Deck aus und pausiert es danach'
         }
         onClick={() => backend.mixer({ type: 'transitionFx' })}
       >
         {TRANSITION_NAMES[kind]}
-        {deckLabel && <span className={styles.fxDeck}> · {deckLabel}</span>}
+        {deckLabel && (
+          <span className={styles.fxDeck}> · {releasing ? 'klingt aus' : deckLabel}</span>
+        )}
       </button>
       <button
         type="button"

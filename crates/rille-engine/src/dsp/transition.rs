@@ -68,6 +68,9 @@ pub struct Transition {
     since_period: usize,
     hp: [Svf; 2],
     hp_coeffs: SvfCoefficients,
+    /// Level fade at the end of Filter-out; frozen when the effect is cancelled so the
+    /// filtered signal never jumps (wet then crossfades back to dry).
+    fade: f32,
 }
 
 fn ms(sample_rate: u32, ms: f32) -> u32 {
@@ -94,6 +97,7 @@ impl Transition {
             since_period: 0,
             hp: [Svf::default(); 2],
             hp_coeffs: SvfCoefficients::new(FILTER_FROM_HZ, sample_rate),
+            fade: 1.0,
         }
     }
 
@@ -138,6 +142,7 @@ impl Transition {
                 self.wet.set_target(1.0);
                 self.wet.snap();
                 self.hp = [Svf::default(); 2];
+                self.fade = 1.0;
             }
             Phase::Running => {
                 self.phase = Phase::Releasing;
@@ -146,6 +151,14 @@ impl Transition {
                 self.wet.set_target(0.0);
             }
             Phase::Releasing => {}
+        }
+    }
+
+    /// The deck got new material (track loaded, unloaded, started again): a running effect on
+    /// it lets go — the dry signal comes back, the tail decays, and nothing gets paused.
+    pub fn release_deck(&mut self, deck: DeckId) {
+        if self.phase == Phase::Running && self.deck == deck {
+            self.trigger(deck);
         }
     }
 
@@ -192,12 +205,11 @@ impl Transition {
             let cutoff = FILTER_FROM_HZ * (FILTER_TO_HZ / FILTER_FROM_HZ).powf(progress);
             self.hp_coeffs = SvfCoefficients::new(cutoff, self.sample_rate);
         }
-        let fade = if self.phase == Phase::Running {
-            (1.0 - (t - FILTER_FADE_FROM_MS) / (FILTER_SWEEP_MS - FILTER_FADE_FROM_MS))
-                .clamp(0.0, 1.0)
-        } else {
-            1.0
-        };
+        if self.phase == Phase::Running {
+            self.fade = (1.0 - (t - FILTER_FADE_FROM_MS) / (FILTER_SWEEP_MS - FILTER_FADE_FROM_MS))
+                .clamp(0.0, 1.0);
+        }
+        let fade = self.fade;
         let wet = self.wet.tick();
         let mut out = [0.0; 2];
         for ch in 0..2 {
@@ -252,6 +264,7 @@ impl Transition {
         self.echo_peak_prev = 0.0;
         self.since_period = 0;
         self.hp = [Svf::default(); 2];
+        self.fade = 1.0;
     }
 }
 
@@ -390,6 +403,49 @@ mod tests {
             }
         );
         assert!((time - 2.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn cancelling_filter_out_late_does_not_jump_in_level() {
+        let mut t = Transition::new(SR);
+        t.cycle();
+        t.trigger(DeckId::A);
+        // Broadband input so the high-passed signal stays strong.
+        let noise = |i: usize| {
+            if (i.wrapping_mul(2_654_435_761) >> 7).is_multiple_of(2) {
+                0.5
+            } else {
+                -0.5
+            }
+        };
+        let (before, _) = run_with(&mut t, 1.9, noise);
+        t.trigger(DeckId::A); // cancel inside the end fade (fade ≈ 0.33)
+        let n = before.len();
+        let after: Vec<f32> = (0..64)
+            .map(|i| t.process([noise(n + i), noise(n + i)])[0])
+            .collect();
+        let rms = |v: &[f32]| (v.iter().map(|x| x * x).sum::<f32>() / v.len() as f32).sqrt();
+        let ratio = rms(&after) / rms(&before[n - 64..]);
+        assert!(ratio < 1.5, "level jumped by {ratio:.2}x on cancel");
+    }
+
+    #[test]
+    fn new_material_releases_the_effect_without_pausing() {
+        let mut t = Transition::new(SR);
+        t.trigger(DeckId::B);
+        run(&mut t, 0.3, 0.5);
+        t.release_deck(DeckId::A); // other deck: no effect
+        assert!(!t.snapshot().releasing);
+        t.release_deck(DeckId::B);
+        assert!(t.snapshot().releasing);
+        let (_, outcome) = run(&mut t, 10.0, 0.5);
+        assert_eq!(
+            outcome.map(|o| o.1),
+            Some(Outcome::Finished {
+                deck: DeckId::B,
+                pause: false
+            })
+        );
     }
 
     #[test]

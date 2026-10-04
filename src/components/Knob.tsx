@@ -1,6 +1,7 @@
-import { useRef, useState } from 'react';
-import type { KeyboardEvent, PointerEvent, WheelEvent } from 'react';
-import { arcPath, dragValue, valueToAngle } from './knobGeometry';
+import { useEffect, useRef, useState } from 'react';
+import type { KeyboardEvent, PointerEvent } from 'react';
+import { useOptimistic } from '../state/useOptimistic';
+import { arcPath, dragValue, valueToAngle, wheelStep } from './knobGeometry';
 import styles from './Knob.module.css';
 
 interface Props {
@@ -35,17 +36,40 @@ export function Knob({
 }: Props) {
   const drag = useRef<{ y: number; start: number } | null>(null);
   const [local, setLocal] = useState<number | null>(null);
-  const shown = local ?? value;
+  // Steps (keys, wheel) build on the last value sent, not on a snapshot that may lag behind.
+  const sent = useOptimistic(value);
+  const shown = local ?? sent.shown;
   const set = (v: number) => {
     const c = Math.min(1, Math.max(0, v));
+    sent.set(c);
     onChange(c);
     return c;
   };
+  const setRef = useRef(set);
+  useEffect(() => {
+    setRef.current = set;
+  });
+  const knobRef = useRef<HTMLDivElement>(null);
+
+  // Native, non-passive wheel listener: React's onWheel cannot preventDefault, and the mixer
+  // column would scroll along with the knob.
+  useEffect(() => {
+    const el = knobRef.current;
+    if (!el) return;
+    const onWheel = (e: globalThis.WheelEvent) => {
+      e.preventDefault();
+      setRef.current(sent.current() + wheelStep(e.deltaY, e.deltaMode, e.shiftKey));
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+    // `sent.current` reads a ref and is stable in behaviour.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     e.currentTarget.focus();
-    drag.current = { y: e.clientY, start: shown };
+    drag.current = { y: e.clientY, start: sent.current() };
     setLocal(shown);
   };
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -59,15 +83,15 @@ export function Knob({
   };
   const onKeyDown = (e: KeyboardEvent) => {
     const step = e.shiftKey ? KEY_STEP * 5 : KEY_STEP;
-    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') set(shown + step);
-    else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') set(shown - step);
+    const base = sent.current();
+    if (e.key === 'ArrowUp' || e.key === 'ArrowRight') set(base + step);
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') set(base - step);
     else if (e.key === 'Home') set(0);
     else if (e.key === 'End') set(1);
     else if (e.key === 'Delete' || e.key === 'Backspace') set(defaultValue);
     else return;
     e.preventDefault();
   };
-  const onWheel = (e: WheelEvent) => set(shown - Math.sign(e.deltaY) * KEY_STEP);
 
   const angle = valueToAngle(shown);
   const origin = valueToAngle(defaultValue);
@@ -75,6 +99,7 @@ export function Knob({
   return (
     <div className={styles.wrap} data-muted={muted || undefined}>
       <div
+        ref={knobRef}
         className={styles.knob}
         role="slider"
         tabIndex={0}
@@ -88,7 +113,6 @@ export function Knob({
         onPointerUp={end}
         onPointerCancel={end}
         onKeyDown={onKeyDown}
-        onWheel={onWheel}
         onDoubleClick={() => set(defaultValue)}
       >
         <svg viewBox={`0 0 ${SIZE} ${SIZE}`} aria-hidden="true">

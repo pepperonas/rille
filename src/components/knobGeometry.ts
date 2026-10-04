@@ -30,3 +30,13 @@ export function dragValue(start: number, dy: number, fine: boolean): number {
   const range = DRAG_RANGE_PX * (fine ? 10 : 1);
   return Math.min(1, Math.max(0, start - dy / range));
 }
+
+/** Wheel/trackpad pixels for the full range; Shift makes it ten times finer. */
+export const WHEEL_RANGE_PX = 600;
+const LINE_PX = 16;
+
+/** Value change for one wheel event, proportional to its size (trackpads send many small ones). */
+export function wheelStep(deltaY: number, deltaMode: number, fine: boolean): number {
+  const px = deltaMode === 1 ? deltaY * LINE_PX : deltaMode === 2 ? deltaY * WHEEL_RANGE_PX : deltaY;
+  return -px / (WHEEL_RANGE_PX * (fine ? 10 : 1));
+}

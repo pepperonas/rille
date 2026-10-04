@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { arcPath, dragValue, valueToAngle } from './knobGeometry';
+import { arcPath, dragValue, valueToAngle, wheelStep, WHEEL_RANGE_PX } from './knobGeometry';
 
 describe('knob geometry', () => {
   it('maps the value range onto 270 degrees with the centre at 12 o\'clock', () => {
@@ -21,5 +21,18 @@ describe('knob geometry', () => {
     expect(dragValue(0.5, 100, false)).toBeCloseTo(0);
     expect(dragValue(0.5, -100, true)).toBeCloseTo(0.55);
     expect(dragValue(0.9, -1000, false)).toBe(1);
+  });
+});
+
+describe('wheel', () => {
+  it('scales with the size of the gesture; scrolling up raises the value', () => {
+    expect(wheelStep(-WHEEL_RANGE_PX, 0, false)).toBeCloseTo(1);
+    expect(wheelStep(2, 0, false)).toBeCloseTo(-2 / WHEEL_RANGE_PX);
+    expect(Math.abs(wheelStep(2, 0, false))).toBeLessThan(0.02);
+  });
+
+  it('understands line mode and Shift', () => {
+    expect(wheelStep(-1, 1, false)).toBeCloseTo(16 / WHEEL_RANGE_PX);
+    expect(wheelStep(-60, 0, true)).toBeCloseTo(0.01);
   });
 });

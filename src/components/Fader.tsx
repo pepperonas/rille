@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import type { KeyboardEvent, PointerEvent } from 'react';
+import { useOptimistic } from '../state/useOptimistic';
 import styles from './Fader.module.css';
 
 interface Props {
@@ -33,7 +34,8 @@ export function Fader({
 }: Props) {
   const track = useRef<HTMLDivElement>(null);
   const [dragValue, setDragValue] = useState<number | null>(null);
-  const shown = dragValue ?? value;
+  const sent = useOptimistic(value);
+  const shown = dragValue ?? sent.shown;
   const vertical = orientation === 'vertical';
 
   const valueAt = (e: PointerEvent) => {
@@ -47,6 +49,7 @@ export function Fader({
 
   const set = (v: number) => {
     const clamped = Math.min(1, Math.max(0, v));
+    sent.set(clamped);
     onChange(clamped);
     return clamped;
   };
@@ -66,8 +69,9 @@ export function Fader({
     const step = e.shiftKey ? KEY_STEP_LARGE : KEY_STEP;
     const up = vertical ? 'ArrowUp' : 'ArrowRight';
     const down = vertical ? 'ArrowDown' : 'ArrowLeft';
-    if (e.key === up) set(shown + step);
-    else if (e.key === down) set(shown - step);
+    const base = sent.current();
+    if (e.key === up) set(base + step);
+    else if (e.key === down) set(base - step);
     else if (e.key === 'Home') set(0);
     else if (e.key === 'End') set(1);
     else return;
