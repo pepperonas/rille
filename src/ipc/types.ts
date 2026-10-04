@@ -68,6 +68,7 @@ export type DeckAction =
   | { type: 'cuePress' }
   | { type: 'cueRelease' }
   | { type: 'jumpToStart' }
+  | { type: 'jumpToCue' }
   | { type: 'seek'; frame: number }
   | { type: 'unload' };
 
@@ -78,11 +79,26 @@ export type MixerAction =
   | { type: 'curve'; curve: Curve }
   | { type: 'masterGain'; value: number };
 
+export interface ControllerStatus {
+  connected: boolean;
+  name: string | null;
+  vinylMode: boolean;
+}
+
+export interface MonitorLine {
+  timeUs: number;
+  outgoing: boolean;
+  hex: string;
+  meaning: string | null;
+}
+
 export interface BackendEvents {
   'deck-loaded': DeckLoaded;
   'deck-load-failed': DeckLoadFailed;
   'deck-ended': Deck;
   'audio-changed': AudioStatus;
+  'controller-changed': ControllerStatus;
+  'midi-monitor': MonitorLine[];
 }
 
 export type Unsubscribe = () => void;
@@ -106,6 +122,9 @@ export interface Backend {
   audioStatus(): Promise<AudioStatus>;
   audioOpen(deviceId: string | null, bufferFrames: number): Promise<AudioStatus>;
   loadFile(deck: Deck, path: string): Promise<number>;
+  controllerStatus(): Promise<ControllerStatus>;
+  setVinylMode(on: boolean): Promise<void>;
+  setMidiMonitor(on: boolean): Promise<void>;
   deck(deck: Deck, action: DeckAction): void;
   mixer(action: MixerAction): void;
 }

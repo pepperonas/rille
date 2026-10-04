@@ -97,3 +97,19 @@ test('holding cue previews and releasing with shift still returns', async ({ pag
   await expect(a.getByLabel('Gespielt')).toHaveText('0:00.0');
   await expect(a.getByRole('button', { name: 'Play' })).toBeVisible();
 });
+
+test('controller status, vinyl mode and MIDI monitor', async ({ page }) => {
+  await expect(page.getByRole('button', { name: 'Kein Controller' })).toBeVisible();
+  await page.getByRole('button', { name: 'Einstellungen' }).click();
+  const vinyl = page.getByRole('switch', { name: /Vinyl-Modus/ });
+  await expect(vinyl).toBeChecked();
+  await vinyl.click({ force: true });
+  await expect(vinyl).not.toBeChecked();
+  await page.getByRole('button', { name: /MIDI-Monitor öffnen/ }).click();
+  await expect(page.getByRole('dialog', { name: 'MIDI-Monitor' })).toContainText(
+    'Noch keine Nachrichten',
+  );
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Meta+Alt+KeyM');
+  await expect(page.getByRole('dialog', { name: 'MIDI-Monitor' })).toBeVisible();
+});

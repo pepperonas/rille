@@ -9,6 +9,6 @@ pub mod slot;
 pub mod smooth;
 pub mod transport;
 
-pub use engine::{Engine, EngineEvent, EngineHandle, TrackLoad, engine_pair};
+pub use engine::{CommandSender, Engine, EngineEvent, EngineHandle, TrackLoad, engine_pair};
 pub use rille_core::DeckId;
 pub use slot::EngineSlot;

@@ -24,6 +24,8 @@ pub enum DeckCommand {
     CueRelease,
     /// Shift + Cue: back to the very start of the track.
     JumpToStart,
+    /// Back to the cue point and pause (fader start "back cue").
+    JumpToCue,
     Seek {
         frame: u64,
     },

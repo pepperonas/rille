@@ -52,11 +52,31 @@ pub struct EngineIo {
     snapshot_tx: Input<Snapshot>,
 }
 
+/// Sending end of a command queue for exactly one producer thread (e.g. the controller).
+pub struct CommandSender {
+    tx: Producer<Command>,
+    dropped: u32,
+}
+
+impl CommandSender {
+    /// Queue a command. Returns `false` (and counts it) when the queue is full; never blocks.
+    pub fn send(&mut self, command: Command) -> bool {
+        let ok = self.tx.push(command).is_ok();
+        if !ok {
+            self.dropped = self.dropped.saturating_add(1);
+        }
+        ok
+    }
+
+    pub fn dropped(&self) -> u32 {
+        self.dropped
+    }
+}
+
 /// Control-side ends of all queues. Lives outside the audio thread.
 pub struct EngineHandle {
     ui_tx: Producer<Command>,
-    /// Taken by the MIDI layer, which then is the only producer on this queue.
-    pub midi_tx: Option<Producer<Command>>,
+    midi_tx: Option<CommandSender>,
     track_tx: Producer<TrackLoad>,
     garbage_rx: Consumer<Arc<TrackAudio>>,
     events_rx: Consumer<EngineEvent>,
@@ -77,6 +97,11 @@ impl EngineHandle {
 
     pub fn dropped_commands(&self) -> u32 {
         self.dropped_commands
+    }
+
+    /// The second command queue, for the controller thread. Can be taken once.
+    pub fn take_midi_sender(&mut self) -> Option<CommandSender> {
+        self.midi_tx.take()
     }
 
     /// Hand a decoded track to a deck. Gives the track back if the queue is full.
@@ -131,7 +156,10 @@ pub fn engine_pair(sample_rate: u32, max_block: usize) -> (Engine, EngineHandle)
     };
     let handle = EngineHandle {
         ui_tx,
-        midi_tx: Some(midi_tx),
+        midi_tx: Some(CommandSender {
+            tx: midi_tx,
+            dropped: 0,
+        }),
         track_tx,
         garbage_rx,
         events_rx,
@@ -446,6 +474,7 @@ impl Engine {
             DeckCommand::CuePress => t.cue_press(),
             DeckCommand::CueRelease => t.cue_release(),
             DeckCommand::JumpToStart => t.jump_to_start(),
+            DeckCommand::JumpToCue => t.jump_to_cue(),
             DeckCommand::Seek { frame } => t.seek(frame),
             DeckCommand::Unload => {}
         }
@@ -651,6 +680,16 @@ mod tests {
         }
         assert!(!h.send(deck_a(DeckCommand::Play)));
         assert_eq!(h.dropped_commands(), 1);
+    }
+
+    #[test]
+    fn controller_queue_is_drained_too() {
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        let mut midi = h.take_midi_sender().unwrap();
+        assert!(h.take_midi_sender().is_none(), "only one producer");
+        midi.send(mix(MixerCommand::Crossfader(0.0)));
+        engine.process(&mut [0.0; 4], 2);
+        assert_eq!(h.snapshot().crossfader, 0.0);
     }
 
     #[test]

@@ -39,6 +39,7 @@ export function createMockBackend(): Backend {
     frameClock: 0,
   };
   let nextId = 1;
+  const controller = { connected: false, name: null as string | null, vinylMode: true };
   let onFrame: ((f: StateFrame) => void) | null = null;
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   const status: AudioStatus = {
@@ -144,6 +145,11 @@ export function createMockBackend(): Backend {
       case 'jumpToStart':
         d.position = 0;
         break;
+      case 'jumpToCue':
+        d.position = d.cue;
+        d.playing = false;
+        d.previewing = false;
+        break;
       case 'seek':
         d.position = Math.max(0, Math.min(d.frames, action.frame));
         break;
@@ -222,6 +228,14 @@ export function createMockBackend(): Backend {
       );
       return id;
     },
+    async controllerStatus() {
+      return { ...controller };
+    },
+    async setVinylMode(on) {
+      controller.vinylMode = on;
+      emit('controller-changed', { ...controller });
+    },
+    async setMidiMonitor() {},
     deck(deck, action) {
       deckAction(decks[idx(deck)], action);
     },

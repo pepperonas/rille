@@ -29,6 +29,18 @@ das Mixxx-Mapping darf nur zum Verständnis gelesen werden.
 - **Soft-Takeover** für alle absoluten Regler (nach Connect, Deck-Wechsel, Zustandsänderung aus
   der App): Wert erst übernehmen, wenn der Hardware-Regler den Software-Wert erreicht.
 
+## Schichten
+1. `ddj200/table.rs` – Bytes, einzige Stelle mit Hex-Werten des Geräts.
+2. `ddj200/decode.rs` – Bytes → `ControlEvent` (14 Bit, Jog, Shift).
+3. `session.rs` – Soft-Takeover zwischen Decoder und Belegung, LED-Zustand, Connect-Logik.
+4. `ddj200/mapping.rs` – Funktionsbelegung `ControlEvent` → `ControllerAction`.
+5. `src-tauri/src/controller_service.rs` – Aktionen → Engine-Befehle, Engine-Zustand → Lampen.
+Neue Funktion am Controller = neue Zeile in `mapping.rs` + Übersetzung in `commands_for`.
+
+## CoreMIDI
+Erster MIDI-Client muss im Hauptthread entstehen (`port::init_on_main_thread`), sonst kein
+Hotplug. Tests ohne Gerät über `virtual_ddj` (CoreMIDI-Virtual-Ports).
+
 ## Hardware-Status
 Offen am Gerät zu prüfen: Kanal 7 vs. 5, Loaded-LED aus mit `0x00`, sendet der Kanalfader mit
 Shift weiterhin `Bn 13/33`, löst der Crossfader Fader Start aus.

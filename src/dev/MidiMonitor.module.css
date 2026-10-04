@@ -1,0 +1,85 @@
+.dialog {
+  border: 0;
+  border-radius: var(--shape-xl);
+  padding: var(--space-5);
+  width: min(90vw, var(--size-monitor-width));
+  height: min(80vh, var(--size-monitor-height));
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface);
+}
+
+.dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.dialog::backdrop {
+  background: color-mix(in srgb, var(--md-scrim) 50%, transparent);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.title {
+  flex: 1;
+  margin: 0;
+  font: var(--type-title-l);
+  font-stretch: var(--font-stretch-emphasized);
+}
+
+.action {
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: var(--space-2) var(--space-4);
+  background: transparent;
+  color: var(--md-primary);
+  font: var(--type-label-l);
+  cursor: pointer;
+}
+
+.action:hover {
+  background: color-mix(in srgb, var(--md-primary) calc(var(--state-hover) * 100%), transparent);
+}
+
+.list {
+  flex: 1;
+  overflow: auto;
+  border-radius: var(--shape-md);
+  background: var(--md-surface-container-lowest);
+  padding: var(--space-2);
+  font: var(--type-body-s);
+  user-select: text;
+}
+
+.line {
+  display: grid;
+  grid-template-columns: max-content var(--space-6) var(--size-monitor-hex) 1fr;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+}
+
+.line[data-out] {
+  color: var(--md-on-surface-variant);
+}
+
+.dir {
+  text-align: center;
+  color: var(--md-tertiary);
+}
+
+.line[data-out] .dir {
+  color: var(--md-secondary);
+}
+
+.hex {
+  color: var(--md-primary);
+}
+
+.empty {
+  margin: var(--space-4);
+  color: var(--md-on-surface-variant);
+}

@@ -84,6 +84,13 @@ impl Transport {
         self.position = 0;
     }
 
+    /// Back to the cue point and pause, whatever the current state.
+    pub fn jump_to_cue(&mut self) {
+        self.position = self.cue;
+        self.playing = false;
+        self.previewing = false;
+    }
+
     pub fn seek(&mut self, frame: u64) {
         self.position = self.clamp(frame);
     }
@@ -165,6 +172,17 @@ mod tests {
         t.play();
         t.jump_to_start();
         assert_eq!((t.position, t.playing), (0, true));
+    }
+
+    #[test]
+    fn jump_to_cue_never_moves_the_cue_point() {
+        let mut t = paused_at(600, 100);
+        t.jump_to_cue();
+        assert_eq!((t.position, t.cue, t.playing), (100, 100, false));
+        t.play();
+        t.advance(10);
+        t.jump_to_cue();
+        assert_eq!((t.position, t.playing), (100, false));
     }
 
     #[test]

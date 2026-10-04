@@ -163,6 +163,16 @@ impl AudioService {
         self.shared.sample_rate
     }
 
+    /// The engine's second command queue, for the controller thread (once).
+    pub fn take_controller_sender(&self) -> Option<rille_engine::CommandSender> {
+        lock(&self.shared.handle).take_midi_sender()
+    }
+
+    /// Latest engine state (for controller LEDs and soft takeover).
+    pub fn snapshot(&self) -> rille_core::Snapshot {
+        lock(&self.shared.handle).snapshot()
+    }
+
     pub fn send(&self, command: Command) {
         lock(&self.shared.handle).send(command);
     }

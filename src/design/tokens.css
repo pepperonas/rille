@@ -77,6 +77,9 @@
   --size-badge: 32px;
   --size-dialog-min: 320px;
   --size-dialog-wide: 520px;
+  --size-monitor-width: 760px;
+  --size-monitor-height: 560px;
+  --size-monitor-hex: 88px;
   --size-fader-thickness: 28px;
   --size-fader-rail: 6px;
   --size-fader-handle: 14px;
@@ -84,6 +87,8 @@
   --size-play-button: 72px;
   --size-transport-button: 56px;
   --size-meter: 8px;
+  --size-switch-width: 52px;
+  --size-switch-height: 32px;
 
   /* Strokes */
   --stroke-hairline: 1px;

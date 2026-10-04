@@ -1,5 +1,12 @@
 import { useSyncExternalStore } from 'react';
-import type { AudioStatus, Deck, DeckLoadFailed, DeckLoaded, StateFrame } from '../ipc/types';
+import type {
+  AudioStatus,
+  ControllerStatus,
+  Deck,
+  DeckLoadFailed,
+  DeckLoaded,
+  StateFrame,
+} from '../ipc/types';
 
 export type DeckInfo =
   | { status: 'empty' }
@@ -13,6 +20,7 @@ export interface AppState {
   receivedAt: number;
   decks: Record<Deck, DeckInfo>;
   audio: AudioStatus | null;
+  controller: ControllerStatus | null;
 }
 
 export const initialState: AppState = {
@@ -20,6 +28,7 @@ export const initialState: AppState = {
   receivedAt: 0,
   decks: { a: { status: 'empty' }, b: { status: 'empty' } },
   audio: null,
+  controller: null,
 };
 
 // Pure transitions, unit-tested.

@@ -19,6 +19,7 @@ export async function connectBackend(): Promise<() => void> {
     backend.on('deck-loaded', (e) => store.update((s) => loaded(s, e))),
     backend.on('deck-load-failed', (e) => store.update((s) => loadFailed(s, e))),
     backend.on('audio-changed', (audio) => store.update((s) => ({ ...s, audio }))),
+    backend.on('controller-changed', (controller) => store.update((s) => ({ ...s, controller }))),
     backend.onFileDrop(({ paths, x, y }) => {
       const target = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-deck]');
       const deck = target?.dataset.deck;
@@ -26,8 +27,11 @@ export async function connectBackend(): Promise<() => void> {
       if ((deck === 'a' || deck === 'b') && path) void loadIntoDeck(deck, path);
     }),
   ]);
-  const audio = await backend.audioStatus();
-  store.update((s) => ({ ...s, audio }));
+  const [audio, controller] = await Promise.all([
+    backend.audioStatus(),
+    backend.controllerStatus().catch(() => null),
+  ]);
+  store.update((s) => ({ ...s, audio, controller }));
   return () => offs.forEach((off) => off());
 }
 

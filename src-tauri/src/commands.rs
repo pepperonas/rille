@@ -9,6 +9,7 @@ use tauri::State;
 use tauri::ipc::Channel;
 
 use crate::audio_service::AudioService;
+use crate::controller_service::{ControllerService, ControllerStatus};
 use crate::dto::{AudioDevice, AudioStatus, Deck, DeckAction, MixerAction, StateFrame};
 
 /// Where state frames go. Replaced on every subscription (e.g. after a webview reload).
@@ -70,4 +71,20 @@ pub fn deck_command(deck: Deck, action: DeckAction, audio: State<'_, AudioServic
 #[tauri::command]
 pub fn mixer_command(action: MixerAction, audio: State<'_, AudioService>) {
     audio.send(Command::Mixer(action.into()));
+}
+
+#[tauri::command]
+pub fn controller_status(controller: State<'_, ControllerService>) -> ControllerStatus {
+    controller.status()
+}
+
+#[tauri::command]
+pub fn controller_set_vinyl(on: bool, controller: State<'_, ControllerService>) {
+    controller.set_vinyl_mode(on);
+}
+
+/// Start or stop streaming MIDI traffic to the developer view.
+#[tauri::command]
+pub fn midi_monitor(on: bool, controller: State<'_, ControllerService>) {
+    controller.set_monitor(on);
 }

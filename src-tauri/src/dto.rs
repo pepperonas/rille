@@ -67,6 +67,7 @@ pub enum DeckAction {
     CuePress,
     CueRelease,
     JumpToStart,
+    JumpToCue,
     Seek { frame: u64 },
     Unload,
 }
@@ -80,6 +81,7 @@ impl From<DeckAction> for DeckCommand {
             DeckAction::CuePress => DeckCommand::CuePress,
             DeckAction::CueRelease => DeckCommand::CueRelease,
             DeckAction::JumpToStart => DeckCommand::JumpToStart,
+            DeckAction::JumpToCue => DeckCommand::JumpToCue,
             DeckAction::Seek { frame } => DeckCommand::Seek { frame },
             DeckAction::Unload => DeckCommand::Unload,
         }

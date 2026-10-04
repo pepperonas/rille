@@ -66,3 +66,13 @@
 .status[data-ok] .dot {
   background: var(--md-primary);
 }
+
+/* A missing controller is normal (mouse/keyboard work): neutral, not an error. */
+.status[data-neutral]:not([data-ok]) {
+  background: var(--md-surface-container-high);
+  color: var(--md-on-surface-variant);
+}
+
+.status[data-neutral]:not([data-ok]) .dot {
+  background: var(--md-outline);
+}

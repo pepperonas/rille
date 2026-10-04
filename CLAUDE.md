@@ -66,3 +66,12 @@ Das Frontend rechnet nichts Audio-Relevantes.
   Mock-Frontend im Browser prüfen.
 - Dekodieren einer 3:43-MP3 dauert ~360 ms (Release) – für die 300-ms-Ladezeit braucht M5 einen
   PCM-Cache.
+- **CoreMIDI sieht neue Geräte nur, wenn der erste MIDI-Client des Prozesses auf einem Thread
+  mit Run-Loop entstand.** `rille_midi::port::init_on_main_thread()` läuft deshalb im
+  Tauri-`setup` (Hauptthread). Ohne das findet das Hotplug-Polling einen später angesteckten
+  DDJ-200 nie (per Gegenprobe belegt).
+- Ohne Hardware testen: `cargo run -p rille-midi --example virtual_ddj` startet einen
+  virtuellen DDJ-200 neben der laufenden App; `--example list_ports` listet alle MIDI-Ports.
+- cpal ruft den Fehler-Callback teils auf dem **Render-Thread** auf und meldet jede
+  CoreAudio-Überlastung als `ErrorKind::Xrun` – dort nur Atomics anfassen
+  (`StreamStats::record_error`), Überlastungen zählen statt den Stream neu aufzubauen.

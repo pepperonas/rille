@@ -1,0 +1,76 @@
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  cursor: pointer;
+}
+
+.text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.label {
+  font: var(--type-body-l);
+}
+
+.description {
+  font: var(--type-body-s);
+  color: var(--md-on-surface-variant);
+}
+
+.input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.track {
+  position: relative;
+  flex: none;
+  width: var(--size-switch-width);
+  height: var(--size-switch-height);
+  border-radius: var(--shape-full);
+  border: var(--stroke-thick) solid var(--md-outline);
+  background: var(--md-surface-container-highest);
+  transition: background-color var(--motion-duration-short) var(--motion-easing-effects),
+    border-color var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.thumb {
+  position: absolute;
+  top: 50%;
+  left: var(--space-1);
+  width: var(--space-4);
+  height: var(--space-4);
+  border-radius: var(--shape-full);
+  background: var(--md-outline);
+  transform: translateY(-50%);
+  transition: transform var(--motion-duration-medium) var(--motion-easing-spatial-default),
+    width var(--motion-duration-short) var(--motion-easing-spatial-fast),
+    height var(--motion-duration-short) var(--motion-easing-spatial-fast),
+    background-color var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.input:checked + .track {
+  background: var(--md-primary);
+  border-color: var(--md-primary);
+}
+
+.input:checked + .track .thumb {
+  width: var(--space-6);
+  height: var(--space-6);
+  background: var(--md-on-primary);
+  transform: translate(calc(var(--size-switch-width) - var(--space-6) - var(--space-3)), -50%);
+}
+
+.row:active .thumb {
+  width: var(--space-6);
+  height: var(--space-6);
+}
+
+.input:focus-visible + .track {
+  outline: var(--stroke-thick) solid var(--md-primary);
+  outline-offset: var(--stroke-thick);
+}

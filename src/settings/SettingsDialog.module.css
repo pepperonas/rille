@@ -54,7 +54,7 @@
 }
 
 .section {
-  margin: 0 0 var(--space-3);
+  margin: var(--space-6) 0 var(--space-3);
   font: var(--type-title-s);
   color: var(--md-primary);
 }

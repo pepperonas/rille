@@ -49,3 +49,25 @@
   color: var(--md-on-error-container);
   font: var(--type-body-m);
 }
+
+.status {
+  margin: 0;
+  font: var(--type-body-m);
+  color: var(--md-on-surface-variant);
+}
+
+.link {
+  align-self: flex-start;
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: var(--space-2) var(--space-3);
+  margin-left: calc(var(--space-3) * -1);
+  background: transparent;
+  color: var(--md-primary);
+  font: var(--type-label-l);
+  cursor: pointer;
+}
+
+.link:hover {
+  background: color-mix(in srgb, var(--md-primary) calc(var(--state-hover) * 100%), transparent);
+}

@@ -2,6 +2,7 @@
 
 mod audio_service;
 mod commands;
+mod controller_service;
 mod dto;
 
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 use audio_service::{AudioService, UiEvent};
 use commands::StateChannel;
+use controller_service::{ControllerEvent, ControllerService};
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -20,9 +22,20 @@ pub fn run() {
     let result = tauri::Builder::default()
         .manage(StateChannel::default())
         .setup(|app| {
+            // Must happen on the main thread (run loop), see the function's docs.
+            rille_midi::port::init_on_main_thread();
             let handle = app.handle().clone();
             let notify = Arc::new(move |event: UiEvent| deliver(&handle, event));
-            app.manage(AudioService::start(notify));
+            let audio = AudioService::start(notify);
+            let handle = app.handle().clone();
+            let controller = ControllerService::start(
+                audio.clone(),
+                Box::new(move |event| deliver_controller(&handle, event)),
+            );
+            app.manage(audio);
+            if let Some(controller) = controller {
+                app.manage(controller);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -33,6 +46,9 @@ pub fn run() {
             commands::deck_load_file,
             commands::deck_command,
             commands::mixer_command,
+            commands::controller_status,
+            commands::controller_set_vinyl,
+            commands::midi_monitor,
         ])
         .run(tauri::generate_context!());
     if let Err(err) = result {
@@ -62,5 +78,15 @@ fn deliver(app: &tauri::AppHandle, event: UiEvent) {
     };
     if let Err(e) = result {
         tracing::warn!(%e, "could not deliver event");
+    }
+}
+
+fn deliver_controller(app: &tauri::AppHandle, event: ControllerEvent) {
+    let result = match event {
+        ControllerEvent::Status(status) => app.emit("controller-changed", status),
+        ControllerEvent::Monitor(lines) => app.emit("midi-monitor", lines),
+    };
+    if let Err(e) = result {
+        tracing::warn!(%e, "could not deliver controller event");
     }
 }

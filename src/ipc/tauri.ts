@@ -40,6 +40,9 @@ export const tauriBackend: Backend = {
   audioStatus: () => invoke('audio_status'),
   audioOpen: (deviceId, bufferFrames) => invoke('audio_open', { deviceId, bufferFrames }),
   loadFile: (deck, path) => invoke('deck_load_file', { deck, path }),
+  controllerStatus: () => invoke('controller_status'),
+  setVinylMode: (on) => invoke('controller_set_vinyl', { on }),
+  setMidiMonitor: (on) => invoke('midi_monitor', { on }),
   deck: (deck, action) => fire('deck_command', { deck, action }),
   mixer: (action) => fire('mixer_command', { action }),
 };

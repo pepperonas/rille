@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { MidiMonitor } from '../dev/MidiMonitor';
 import { SettingsDialog } from '../settings/SettingsDialog';
 import { useAppState } from '../state/store';
 import { AboutDialog } from './AboutDialog';
@@ -9,11 +10,31 @@ export function Titlebar() {
   const about = useRef<HTMLDialogElement>(null);
   const settings = useRef<HTMLDialogElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const monitor = useRef<HTMLDialogElement>(null);
+  const [monitorOpen, setMonitorOpen] = useState(false);
   const audio = useAppState((s) => s.audio);
+  const controller = useAppState((s) => s.controller);
   const openSettings = () => {
     settings.current?.showModal();
     setSettingsOpen(true);
   };
+  const openMonitor = () => {
+    settings.current?.close();
+    monitor.current?.showModal();
+    setMonitorOpen(true);
+  };
+
+  // ⌘⌥M opens the MIDI monitor from anywhere.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.metaKey && e.altKey && e.code === 'KeyM') {
+        e.preventDefault();
+        openMonitor();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   return (
     <header className={styles.bar} data-tauri-drag-region>
@@ -33,6 +54,16 @@ export function Titlebar() {
           : audio.connected
             ? `${audio.deviceName ?? 'Audio'} · ${audio.latencyMs.toFixed(1)} ms`
             : 'Kein Audio-Gerät'}
+      </button>
+      <button
+        type="button"
+        className={styles.status}
+        data-ok={controller?.connected || undefined}
+        data-neutral
+        onClick={openSettings}
+      >
+        <span className={styles.dot} aria-hidden="true" />
+        {controller?.connected ? (controller.name ?? 'DDJ-200') : 'Kein Controller'}
       </button>
       <button
         type="button"
@@ -61,7 +92,13 @@ export function Titlebar() {
         </svg>
       </button>
       <AboutDialog ref={about} />
-      <SettingsDialog ref={settings} open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsDialog
+        ref={settings}
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onOpenMonitor={openMonitor}
+      />
+      <MidiMonitor ref={monitor} open={monitorOpen} onClose={() => setMonitorOpen(false)} />
     </header>
   );
 }

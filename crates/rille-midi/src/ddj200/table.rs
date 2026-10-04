@@ -87,7 +87,7 @@ pub enum InputKind {
 }
 
 /// Which deck a control belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Scope {
     Deck(DeckId),
     Global,
