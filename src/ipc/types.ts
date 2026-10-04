@@ -126,6 +126,8 @@ export interface Backend {
   controllerStatus(): Promise<ControllerStatus>;
   setVinylMode(on: boolean): Promise<void>;
   setMidiMonitor(on: boolean): Promise<void>;
+  /** Open a link in the default browser (only allow-listed URLs, see links.ts). */
+  openExternal(url: string): Promise<void>;
   deck(deck: Deck, action: DeckAction): void;
   mixer(action: MixerAction): void;
 }

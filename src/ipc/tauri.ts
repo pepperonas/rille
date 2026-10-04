@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { openUrl } from '@tauri-apps/plugin-opener';
 import type { Backend, StateFrame } from './types';
 
 function fire(command: string, args: Record<string, unknown>) {
@@ -43,6 +44,7 @@ export const tauriBackend: Backend = {
   controllerStatus: () => invoke('controller_status'),
   setVinylMode: (on) => invoke('controller_set_vinyl', { on }),
   setMidiMonitor: (on) => invoke('midi_monitor', { on }),
+  openExternal: (url) => openUrl(url),
   deck: (deck, action) => fire('deck_command', { deck, action }),
   mixer: (action) => fire('mixer_command', { action }),
 };

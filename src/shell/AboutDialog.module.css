@@ -2,7 +2,7 @@
   border: 0;
   border-radius: var(--shape-xl);
   padding: var(--space-6);
-  min-width: var(--size-dialog-min);
+  width: min(90vw, var(--size-dialog-wide));
   background: var(--md-surface-container-high);
   color: var(--md-on-surface);
 }
@@ -11,23 +11,108 @@
   background: color-mix(in srgb, var(--md-scrim) 50%, transparent);
 }
 
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+
+.icon {
+  width: var(--size-about-icon);
+  height: var(--size-about-icon);
+}
+
 .title {
-  margin: 0 0 var(--space-4);
-  font: var(--type-headline-s);
+  margin: 0;
+  font: var(--type-headline-m);
   font-stretch: var(--font-stretch-emphasized);
 }
 
-.body,
 .version {
-  margin: 0 0 var(--space-2);
+  margin: 0;
   font: var(--type-body-m);
   color: var(--md-on-surface-variant);
+}
+
+.body {
+  margin: 0 0 var(--space-3);
+  font: var(--type-body-l);
+}
+
+.support {
+  margin: 0 0 var(--space-5);
+  font: var(--type-body-m);
+  color: var(--md-on-surface-variant);
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.donate,
+.rate {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: var(--space-3) var(--space-5);
+  font: var(--type-label-l);
+  cursor: pointer;
+  transition:
+    border-radius var(--motion-duration-short) var(--motion-easing-spatial-fast),
+    filter var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.donate {
+  background: var(--md-primary);
+  color: var(--md-on-primary);
+}
+
+.rate {
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+}
+
+.donate:hover,
+.rate:hover {
+  filter: brightness(1.08);
+}
+
+.donate:active,
+.rate:active {
+  border-radius: var(--shape-md);
+}
+
+.links {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin: var(--space-4) 0 0;
+  color: var(--md-on-surface-variant);
+}
+
+.link {
+  border: 0;
+  border-radius: var(--shape-sm);
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  color: var(--md-primary);
+  font: var(--type-label-l);
+  cursor: pointer;
+}
+
+.link:hover {
+  background: color-mix(in srgb, var(--md-primary) calc(var(--state-hover) * 100%), transparent);
 }
 
 .actions {
   display: flex;
   justify-content: flex-end;
-  margin-top: var(--space-6);
+  margin-top: var(--space-4);
 }
 
 .textButton {

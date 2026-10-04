@@ -20,6 +20,7 @@ pub fn run() {
         .init();
 
     let result = tauri::Builder::default()
+        .plugin(tauri_plugin_opener::init())
         .manage(StateChannel::default())
         .setup(|app| {
             // Must happen on the main thread (run loop), see the function's docs.

@@ -113,3 +113,22 @@ test('controller status, vinyl mode and MIDI monitor', async ({ page }) => {
   await page.keyboard.press('Meta+Alt+KeyM');
   await expect(page.getByRole('dialog', { name: 'MIDI-Monitor' })).toBeVisible();
 });
+
+test('about dialog offers donating and rating celox.io', async ({ page }) => {
+  await page.addInitScript(() => {
+    (window as unknown as { opened: string[] }).opened = [];
+    window.open = ((url: string) => {
+      (window as unknown as { opened: string[] }).opened.push(url);
+      return null;
+    }) as typeof window.open;
+  });
+  await page.reload();
+  await page.getByRole('button', { name: 'Über rille' }).click();
+  const dialog = page.getByRole('dialog', { name: 'rille' });
+  await dialog.getByRole('button', { name: 'Spenden via PayPal' }).click();
+  await dialog.getByRole('button', { name: 'celox.io bewerten' }).click();
+  const opened = await page.evaluate(() => (window as unknown as { opened: string[] }).opened);
+  expect(opened[0]).toContain('paypal.com/donate/?business=martin.pfeffer@celox.io');
+  expect(opened[1]).toBe('https://g.page/r/CXgdRV3QysvxEBM/review');
+  await expect(dialog).toContainText(`© ${new Date().getFullYear()} Martin Pfeffer | celox.io`);
+});

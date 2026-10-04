@@ -159,6 +159,8 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
   (details [below](#%EF%B8%8F-pioneer-ddj-200)).
 - **Material 3 Expressive UI** — dark first, per-deck accent colours, spring motion, the play
   button morphs between circle and rounded square.
+- **About dialog** — version, donate and rate buttons, links to the source; external links may
+  open only the allow-listed URLs.
 
 **Coming next** — EQ with kill, bipolar filter and transition FX (M3), tempo/keylock/scratch
 (M4), library with BPM and beatgrid analysis (M5), waveforms (M6), sync, hot cues, loops and

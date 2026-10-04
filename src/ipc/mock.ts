@@ -289,6 +289,9 @@ export function createMockBackend(): Backend {
         });
       emit('midi-monitor', [...batch(), ...batch()]);
     },
+    async openExternal(url) {
+      window.open(url, '_blank', 'noopener');
+    },
     deck(deck, action) {
       deckAction(decks[idx(deck)], action);
     },

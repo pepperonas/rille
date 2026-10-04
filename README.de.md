@@ -106,6 +106,8 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
   MIDI-Monitor (Details [unten](#%EF%B8%8F-pioneer-ddj-200)).
 - **Oberfläche in Material 3 Expressive** — dunkel zuerst, eigene Akzentfarbe pro Deck,
   Spring-Animationen, der Play-Knopf morpht zwischen Kreis und abgerundetem Quadrat.
+- **„Über rille“** — Version, Spenden- und Bewerten-Button, Link zum Quellcode; externe Links
+  dürfen nur die freigegebenen Adressen öffnen.
 
 **Als Nächstes** — EQ mit Kill, bipolares Filter und Transition-FX (M3), Tempo/Keylock/Scratch
 (M4), Library mit BPM- und Beatgrid-Analyse (M5), Waveforms (M6), Sync, Hot Cues, Loops und Pads

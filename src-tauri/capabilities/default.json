@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal permissions for the main window. rille talks to Rust only through its own commands.",
+  "description": "Minimal permissions for the main window. rille talks to Rust through its own commands; the opener may only open the donate, rating, project and celox.io links.",
   "windows": [
     "main"
   ],
@@ -9,6 +9,29 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "core:window:allow-start-dragging",
-    "core:window:allow-internal-toggle-maximize"
+    "core:window:allow-internal-toggle-maximize",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://www.paypal.com/donate/?business=martin.pfeffer@celox.io*"
+        },
+        {
+          "url": "https://g.page/r/CXgdRV3QysvxEBM/review"
+        },
+        {
+          "url": "https://github.com/pepperonas/rille"
+        },
+        {
+          "url": "https://github.com/pepperonas/rille/*"
+        },
+        {
+          "url": "https://celox.io"
+        },
+        {
+          "url": "https://celox.io/*"
+        }
+      ]
+    }
   ]
 }

@@ -14,6 +14,9 @@ All notable changes to rille are documented here. The format follows
 - `pnpm screenshots` (`tools/screenshots.mjs`) renders the README screenshots and the social
   banner from the in-browser demo (`?demo`).
 - Browser demo mode: two playing decks, a "connected" controller and simulated MIDI traffic.
+- About dialog: app icon, version, "Spenden via PayPal" and "celox.io bewerten" buttons, links
+  to the source code and celox.io. External links go through the Tauri opener plugin, scoped
+  to exactly these URLs (a test mirrors the plugin's glob matching, including lookalike hosts).
 
 ### Fixed
 - MIDI monitor: the view now subscribes before switching the stream on, so the first batch of
