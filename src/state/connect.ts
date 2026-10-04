@@ -32,6 +32,11 @@ export async function connectBackend(): Promise<() => void> {
     backend.controllerStatus().catch(() => null),
   ]);
   store.update((s) => ({ ...s, audio, controller }));
+  if (backend.kind === 'mock' && new URLSearchParams(location.search).has('demo')) {
+    // Browser demo (screenshots): two tracks, loaded through the normal path.
+    void loadIntoDeck('a', '/demo/Deep Hours (Extended Mix).wav');
+    void loadIntoDeck('b', '/demo/Neon Avenue (Club Edit).wav');
+  }
   return () => offs.forEach((off) => off());
 }
 

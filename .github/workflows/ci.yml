@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   check:
     runs-on: macos-15
@@ -31,3 +34,19 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+
+      # Version, lines of code and test counts behind the README badges. Recomputed on every
+      # push to main and committed only when a number moved; [skip ci] stops the loop.
+      - name: Refresh badge counters
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          node tools/stats.mjs
+          if git diff --quiet -- .github/badges; then
+            echo "badges unchanged"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/badges
+          git commit -m "chore: refresh badge counters [skip ci]"
+          git push

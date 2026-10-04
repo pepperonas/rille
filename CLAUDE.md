@@ -15,6 +15,8 @@ pnpm e2e                     # Playwright gegen das Mock-Backend (System-Chrome)
 pnpm tokens                  # Farb-Tokens neu erzeugen nach Seed-Änderung
 pnpm check                   # alles: typecheck, lint, vitest, rustfmt, clippy, cargo test
 pnpm tauri build             # .app/.dmg (unsigniert)
+pnpm badges                  # README-Zahlen neu messen (.github/badges/*.json)
+pnpm screenshots             # docs/screenshots/* und docs/banner.png aus der Browser-Demo rendern
 ```
 
 ## Struktur
@@ -75,3 +77,20 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - cpal ruft den Fehler-Callback teils auf dem **Render-Thread** auf und meldet jede
   CoreAudio-Überlastung als `ErrorKind::Xrun` – dort nur Atomics anfassen
   (`StreamStats::record_error`), Überlastungen zählen statt den Stream neu aufzubauen.
+
+## Doku, Badges, Screenshots
+- README ist zweisprachig: `README.md` (Englisch, vollständige Badge-Liste) und `README.de.md`.
+  Inhaltliche Änderungen in **beiden** pflegen; `tools/readme.test.mjs` prüft Bilder,
+  Badge-Dateien, Spenden-/Bewerten-Links und den Changelog-Eintrag der aktuellen Version.
+- Version steht dreimal (Cargo-Workspace, `package.json`, `tauri.conf.json`) – ein Test
+  erzwingt Gleichstand. Release = alle drei anheben + `CHANGELOG.md` + Tag `vX.Y.Z`.
+- Die großen Badges (Version, Unit-Tests, LoC, Testcode) kommen aus `.github/badges/*.json`
+  (shields.io-Endpoint). `tools/stats.mjs` misst sie; die CI committet sie bei jedem Push auf
+  `main` als `chore: refresh badge counters [skip ci]`. **Deshalb vor jedem Push
+  `git pull --rebase`**, sonst wird der Push abgewiesen.
+- Screenshots entstehen aus der Browser-Demo (`?demo`: zwei spielende Decks, verbundener
+  Controller, simulierter MIDI-Verkehr) im macOS-Fensterrahmen `tools/frame.html`; das Banner
+  aus `tools/banner.html` (1280×640, zugleich GitHub-Social-Preview). Nach sichtbaren
+  UI-Änderungen `pnpm screenshots` laufen lassen.
+- Social Preview lässt sich nicht per API setzen: GitHub → Settings → Social preview →
+  `docs/banner.png` hochladen.

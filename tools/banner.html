@@ -1,0 +1,137 @@
+<!doctype html>
+<!-- Social preview / README banner, 1280×640. Rendered by tools/screenshots.mjs. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      @font-face {
+        font-family: 'Roboto Flex';
+        src: url('/node_modules/@fontsource-variable/roboto-flex/files/roboto-flex-latin-full-normal.woff2')
+          format('woff2-variations');
+        font-weight: 100 1000;
+        font-stretch: 25% 151%;
+      }
+      html,
+      body {
+        margin: 0;
+      }
+      .banner {
+        position: relative;
+        width: 1280px;
+        height: 640px;
+        overflow: hidden;
+        font-family: 'Roboto Flex', system-ui;
+        color: #e5e1e9;
+        background:
+          radial-gradient(circle at 18% 120%, rgba(0, 194, 209, 0.28), transparent 45%),
+          radial-gradient(circle at 105% -10%, rgba(255, 122, 26, 0.3), transparent 45%),
+          radial-gradient(circle at 60% 50%, rgba(91, 75, 255, 0.22), transparent 55%),
+          #0e0e12;
+      }
+      /* Record grooves behind everything. */
+      .grooves {
+        position: absolute;
+        left: -260px;
+        top: 50%;
+        width: 900px;
+        height: 900px;
+        transform: translateY(-50%);
+        border-radius: 50%;
+        background: repeating-radial-gradient(
+          circle,
+          rgba(255, 255, 255, 0.045) 0 1px,
+          transparent 1px 9px
+        );
+        mask-image: radial-gradient(circle, black 30%, transparent 70%);
+      }
+      .text {
+        position: absolute;
+        left: 80px;
+        top: 112px;
+        width: 600px;
+      }
+      .mark {
+        display: flex;
+        align-items: center;
+        gap: 22px;
+      }
+      .mark img {
+        width: 104px;
+        height: 104px;
+      }
+      h1 {
+        margin: 0;
+        font-size: 128px;
+        line-height: 1;
+        font-weight: 800;
+        font-stretch: 130%;
+        letter-spacing: -2px;
+      }
+      .tagline {
+        margin: 34px 0 0;
+        font-size: 36px;
+        line-height: 1.15;
+        font-weight: 600;
+        font-stretch: 112%;
+      }
+      .tagline em {
+        font-style: normal;
+        background: linear-gradient(90deg, #88f3ff, #c6c2ee 50%, #ff914f);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 36px;
+      }
+      .chips span {
+        white-space: nowrap;
+        padding: 8px 16px;
+        border-radius: 999px;
+        background: rgba(198, 194, 238, 0.12);
+        border: 1px solid rgba(198, 194, 238, 0.25);
+        font-size: 17px;
+        font-weight: 600;
+      }
+      .shot {
+        position: absolute;
+        right: -170px;
+        top: 70px;
+        width: 860px;
+        border-radius: 16px;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.14),
+          0 40px 90px rgba(0, 0, 0, 0.6);
+        transform: perspective(1600px) rotateY(-14deg) rotateX(4deg);
+      }
+      .url {
+        position: absolute;
+        left: 80px;
+        bottom: 46px;
+        font-size: 20px;
+        font-weight: 500;
+        color: rgba(229, 225, 233, 0.6);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="banner">
+      <div class="grooves"></div>
+      <img class="shot" src="/docs/screenshots/decks.png" alt="" />
+      <div class="text">
+        <div class="mark">
+          <img src="/design/icon-source.png" alt="" />
+          <h1>rille</h1>
+        </div>
+        <p class="tagline">Native DJ app for macOS —<br /><em>made for the Pioneer&nbsp;DDJ&#8209;200</em></p>
+        <div class="chips">
+          <span>Rust audio engine</span><span>Tauri 2</span><span>Material 3 Expressive</span>
+        </div>
+      </div>
+      <div class="url">github.com/pepperonas/rille</div>
+    </div>
+  </body>
+</html>

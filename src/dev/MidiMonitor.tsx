@@ -19,13 +19,20 @@ export function MidiMonitor({ ref, open, onClose }: { ref: Ref<HTMLDialogElement
     if (!open) return;
     let off: (() => void) | undefined;
     let cancelled = false;
-    void backend.setMidiMonitor(true);
+    // Listen first, then switch the stream on, so the first batch is not lost.
     backend
       .on('midi-monitor', (batch) => {
         if (pausedRef.current) return;
         setLines((prev) => [...prev, ...batch].slice(-MAX_LINES));
       })
-      .then((unsubscribe) => (cancelled ? unsubscribe() : (off = unsubscribe)));
+      .then((unsubscribe) => {
+        if (cancelled) {
+          unsubscribe();
+          return;
+        }
+        off = unsubscribe;
+        void backend.setMidiMonitor(true);
+      });
     return () => {
       cancelled = true;
       off?.();
