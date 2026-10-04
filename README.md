@@ -97,9 +97,9 @@
 [![No CDN](https://img.shields.io/badge/remote%20content-none%20(strict%20CSP)-2E7D32)](#-architecture)
 
 > **Status: early development (v0.1.0).** Two decks play files dropped from the Finder, with
-> Pioneer-style cue, channel faders, crossfader and meters — controllable with mouse, keyboard
-> and the DDJ-200. EQ, filter, tempo/keylock, the library, waveforms and beat features follow
-> milestone by milestone (see [Roadmap](#%EF%B8%8F-roadmap)). There is no packaged release yet.
+> Pioneer-style cue, isolator EQ, filter, transition FX, channel faders, crossfader and meters —
+> controllable with mouse, keyboard and the DDJ-200. Tempo/keylock, the library, waveforms and
+> beat features follow milestone by milestone (see [Roadmap](#%EF%B8%8F-roadmap)). There is no packaged release yet.
 
 ---
 
@@ -150,6 +150,14 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 - **Mixer** — channel faders with a DJ taper, master level, crossfader with three curves
   (Blend = constant power, Linear, Cut for scratching), segmented peak meters per channel and
   master.
+- **Isolator EQ** — Hi / Mid / Low per channel with Linkwitz-Riley crossovers at 200 Hz and
+  2 kHz (flat when neutral), knob fully left or a click on the band name kills the band, up
+  to +6 dB boost.
+- **Bipolar filter** — one knob per channel: left a low-pass closes, right a high-pass opens,
+  the centre is a true bypass.
+- **Transition FX** — one button takes the louder playing deck out of the mix: *Echo-Out*
+  (the deck fades while its last moment keeps echoing) or *Filter-Out* (a high-pass sweeps
+  up). The deck pauses afterwards; pressing again cancels.
 - **Click-free transport** — stop, start, cue jumps and seeks crossfade over 4 ms instead of
   cutting the waveform.
 - **Audio settings** — output device, buffer size 64–2048, measured latency, dropout counter;
@@ -162,8 +170,7 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 - **About dialog** — version, donate and rate buttons, links to the source; external links may
   open only the allow-listed URLs.
 
-**Coming next** — EQ with kill, bipolar filter and transition FX (M3), tempo/keylock/scratch
-(M4), library with BPM and beatgrid analysis (M5), waveforms (M6), sync, hot cues, loops and
+**Coming next** — tempo/keylock/scratch (M4), library with BPM and beatgrid analysis (M5), waveforms (M6), sync, hot cues, loops and
 pads (M7), headphone cueing (M8). See the [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
@@ -182,11 +189,11 @@ mode and the MIDI monitor are in the settings.
 | Jog rim | Pitch bend | Browse the library | M4 / M5 |
 | Tempo fader | Tempo (top = slower, as printed) | — | M4 |
 | Beat Sync | Short: sync · long: sync lock | Cycle tempo range (±6/10/16 %/wide) | M7 |
-| EQ Hi / Mid / Low | Three-band isolator EQ | — | M3 |
-| CFX | Bipolar filter (left low-pass, right high-pass) | — | M3 |
+| EQ Hi / Mid / Low | Three-band isolator EQ | — | ✅ |
+| CFX | Bipolar filter (left low-pass, right high-pass) | — | ✅ |
 | Headphone cue | Pre-listen the channel | Load the selected track | M8 / M5 |
 | Master cue | Master in the headphones | — | M8 |
-| Transition FX | Echo-out on the active deck | Change effect | M3 |
+| Transition FX | Echo-out / filter-out on the louder playing deck; again = cancel | Change effect | ✅ |
 | Pads 1–8 | Hot cue / beat loop / beat jump | Delete / exit loop | M7 |
 
 **How the controller is handled**
@@ -224,6 +231,9 @@ Everything works without a controller:
 | Play / Pause, Cue | Click, or focus the button and press Space / Enter (Cue: hold to preview) |
 | Jump to start | Shift + click on Cue |
 | Faders | Drag; arrow keys (Shift = larger steps), Home / End; double-click resets |
+| EQ / filter knobs | Drag up/down (Shift = fine), mouse wheel, arrow keys; double-click or Delete = centre |
+| EQ kill | Click the band name (HI / MID / LOW) under the knob |
+| Transition FX | Button under the crossfader; ⇄ next to it changes the effect |
 | Crossfader curve | Blend / Linear / Cut chips under the crossfader |
 | Settings | ⚙︎ in the title bar, or click the audio / controller status |
 | MIDI monitor | ⌘⌥M |
@@ -336,7 +346,7 @@ and CI commits new numbers whenever they change.
 
 | Suite | Where | Highlights |
 |---|---|---|
-| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps |
+| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps |
 | Allocation guard | `crates/rille-engine/tests/no_alloc.rs` | 2,000 blocks under `assert_no_alloc`, plus a counter-check that a planted allocation is caught |
 | CoreMIDI round trip | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtual DDJ-200 → port → decoder → action, and LEDs back |
 | Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | store and load races, position extrapolation, token sync and contrast, "no raw values" guard |
@@ -376,7 +386,7 @@ rille/
 | M0 | Foundation: workspace, Tauri shell, tokens, CI | ✅ |
 | M1 | Engine core: playback, cue, mixer, meters, devices | ✅ |
 | M2 | Pioneer DDJ-200: mapping, LEDs, takeover, hotplug, monitor | ✅ (hardware acceptance pending) |
-| M3 | Isolator EQ with kill, bipolar filter, transition FX (echo-out) | 🚧 DSP done |
+| M3 | Isolator EQ with kill, bipolar filter, transition FX (echo-out, filter-out) | ✅ |
 | M4 | Tempo ranges, keylock (Signalsmith Stretch), pitch bend, scratch, reverse | ⏳ |
 | M5 | Library: import, SQLite, BPM/beatgrid analysis, search, drag & drop | ⏳ |
 | M6 | Waveforms (overview + scrolling detail, frequency colours), deck UI | ⏳ |

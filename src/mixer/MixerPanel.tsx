@@ -1,9 +1,11 @@
 import { backend } from '../ipc';
-import type { Curve, Deck } from '../ipc/types';
+import type { Band, Curve, Deck } from '../ipc/types';
 import { Fader } from '../components/Fader';
+import { Knob } from '../components/Knob';
 import { Meter } from '../components/Meter';
 import type { AppState } from '../state/store';
 import { useAppState } from '../state/store';
+import { TRANSITION_NAMES, eqText, filterText } from './valueText';
 import styles from './MixerPanel.module.css';
 
 const peakA = (s: AppState) => s.frame?.decks[0].peak;
@@ -16,18 +18,56 @@ const CURVES: { value: Curve; label: string; hint: string }[] = [
   { value: 'cut', label: 'Cut', hint: 'Scharfe Kurve zum Scratchen' },
 ];
 
+const BANDS: { band: Band; index: number; caption: string; name: string }[] = [
+  { band: 'high', index: 2, caption: 'HI', name: 'Höhen' },
+  { band: 'mid', index: 1, caption: 'MID', name: 'Mitten' },
+  { band: 'low', index: 0, caption: 'LOW', name: 'Bässe' },
+];
+
 function Channel({ deck }: { deck: Deck }) {
   const i = deck === 'a' ? 0 : 1;
-  const value = useAppState((s) => s.frame?.channelFader[i] ?? 1);
+  const fader = useAppState((s) => s.frame?.channelFader[i] ?? 1);
+  const eq = useAppState((s) => s.frame?.eq[i]);
+  const kill = useAppState((s) => s.frame?.eqKill[i]);
+  const filter = useAppState((s) => s.frame?.filter[i] ?? 0.5);
   const label = deck === 'a' ? 'Kanal 1' : 'Kanal 2';
   return (
     <div className={styles.channel} data-deck={deck}>
       <span className={styles.channelLabel}>{deck === 'a' ? '1' : '2'}</span>
+      <div className={styles.knobs}>
+        {BANDS.map(({ band, index, caption, name }) => {
+          const killed = kill?.[index] ?? false;
+          const v = eq?.[index] ?? 0.5;
+          return (
+            <Knob
+              key={band}
+              label={`${name} ${label}`}
+              caption={caption}
+              value={v}
+              muted={killed}
+              valueText={eqText(v, killed)}
+              onChange={(value) => backend.mixer({ type: 'eq', deck, band, value })}
+              captionToggle={{
+                label: `${name} ${label} stummschalten (Kill)`,
+                pressed: killed,
+                onToggle: () => backend.mixer({ type: 'eqKill', deck, band, kill: !killed }),
+              }}
+            />
+          );
+        })}
+        <Knob
+          label={`Filter ${label}`}
+          caption="FILTER"
+          value={filter}
+          valueText={filterText(filter)}
+          onChange={(value) => backend.mixer({ type: 'filter', deck, value })}
+        />
+      </div>
       <div className={styles.strip}>
         <Meter label={`Pegel ${label}`} select={deck === 'a' ? peakA : peakB} />
         <Fader
           label={`Kanalfader ${label}`}
-          value={value}
+          value={fader}
           defaultValue={1}
           onChange={(v) => backend.mixer({ type: 'channelFader', deck, value: v })}
         />
@@ -36,7 +76,47 @@ function Channel({ deck }: { deck: Deck }) {
   );
 }
 
-/** Mixer column between the decks: channel faders, master, crossfader. */
+function TransitionFx() {
+  const t = useAppState((s) => s.frame?.transition);
+  const kind = t?.kind ?? 'echoOut';
+  const running = !!t?.deck;
+  const deckLabel = t?.deck === 'a' ? 'Deck 1' : t?.deck === 'b' ? 'Deck 2' : null;
+  return (
+    <div className={styles.transition}>
+      <button
+        type="button"
+        className={styles.fxButton}
+        data-running={running || undefined}
+        data-releasing={t?.releasing || undefined}
+        aria-pressed={running}
+        aria-label={`Transition FX: ${TRANSITION_NAMES[kind]}${deckLabel ? ` auf ${deckLabel}` : ''}`}
+        title={
+          running
+            ? 'Nochmal drücken bricht ab'
+            : 'Blendet das lautere spielende Deck aus und pausiert es danach'
+        }
+        onClick={() => backend.mixer({ type: 'transitionFx' })}
+      >
+        {TRANSITION_NAMES[kind]}
+        {deckLabel && <span className={styles.fxDeck}> · {deckLabel}</span>}
+      </button>
+      <button
+        type="button"
+        className={styles.fxCycle}
+        disabled={running}
+        aria-label={`Effekt wechseln (jetzt ${TRANSITION_NAMES[kind]})`}
+        title="Effekt wechseln"
+        onClick={() => backend.mixer({ type: 'cycleTransitionFx' })}
+      >
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path fill="currentColor" d="M7 7h10v3l4-4-4-4v3H5v6h2V7Zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4Z" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+/** Mixer column between the decks: EQ, filter, faders, crossfader, transition effect. */
 export function MixerPanel() {
   const crossfader = useAppState((s) => s.frame?.crossfader ?? 0.5);
   const curve = useAppState((s) => s.frame?.curve ?? 'smooth');
@@ -85,6 +165,7 @@ export function MixerPanel() {
             </button>
           ))}
         </div>
+        <TransitionFx />
       </div>
     </section>
   );

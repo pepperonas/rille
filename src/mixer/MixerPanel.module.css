@@ -42,6 +42,13 @@
   min-height: 0;
 }
 
+.knobs {
+  display: grid;
+  grid-template-columns: repeat(2, auto);
+  justify-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
 .master {
   --accent: var(--md-primary);
 }
@@ -57,6 +64,11 @@
   display: flex;
   gap: var(--space-2);
   min-height: 0;
+}
+
+/* The strips share the remaining height; nothing may spill into the crossfader. */
+.channels > * {
+  overflow: hidden;
 }
 
 .crossfader {
@@ -89,4 +101,77 @@
   border-radius: var(--shape-full);
   background: var(--md-secondary-container);
   color: var(--md-on-secondary-container);
+}
+
+.transition {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.fxButton {
+  flex: 1;
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: var(--space-2) var(--space-4);
+  background: var(--md-tertiary-container);
+  color: var(--md-on-tertiary-container);
+  font: var(--type-label-l);
+  font-stretch: var(--font-stretch-emphasized);
+  cursor: pointer;
+  transition:
+    border-radius var(--motion-duration-short) var(--motion-easing-spatial-fast),
+    background-color var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.fxButton:active {
+  border-radius: var(--shape-md);
+}
+
+.fxButton[data-running] {
+  background: var(--md-tertiary);
+  color: var(--md-on-tertiary);
+  animation: fx-pulse var(--motion-duration-long) var(--motion-easing-emphasized) infinite alternate;
+}
+
+.fxButton[data-releasing] {
+  animation: none;
+  opacity: 0.7;
+}
+
+.fxDeck {
+  font-weight: 400;
+}
+
+.fxCycle {
+  display: grid;
+  place-items: center;
+  width: var(--size-icon-button);
+  height: var(--size-icon-button);
+  align-self: center;
+  border: 0;
+  border-radius: var(--shape-full);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+}
+
+.fxCycle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--md-on-surface) calc(var(--state-hover) * 100%), transparent);
+}
+
+.fxCycle:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+@keyframes fx-pulse {
+  to {
+    filter: brightness(1.15);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fxButton[data-running] {
+    animation: none;
+  }
 }

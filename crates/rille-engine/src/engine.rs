@@ -12,6 +12,9 @@ use rtrb::{Consumer, Producer, RingBuffer};
 use triple_buffer::{Input, Output};
 
 use crate::curves::{channel_gain, crossfader_gains, trim_gain};
+use crate::dsp::eq::Eq;
+use crate::dsp::filter::BipolarFilter;
+use crate::dsp::transition::{Outcome, Transition};
 use crate::meter::PeakMeter;
 use crate::smooth::Smoother;
 use crate::transport::Transport;
@@ -38,8 +41,17 @@ pub struct TrackLoad {
 /// Things the engine reports that must not get lost (unlike the snapshot, which is overwritten).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineEvent {
-    TrackLoaded { deck: DeckId, track_id: u64 },
-    TrackEnded { deck: DeckId },
+    TrackLoaded {
+        deck: DeckId,
+        track_id: u64,
+    },
+    TrackEnded {
+        deck: DeckId,
+    },
+    /// A transition effect ran to its end and paused the deck.
+    TransitionFinished {
+        deck: DeckId,
+    },
 }
 
 /// Engine-side ends of all queues.
@@ -191,6 +203,8 @@ struct Deck {
     tail: Option<Tail>,
     /// Frames left of the fade-in after a start or jump.
     fade_in: u32,
+    eq: Eq,
+    filter: BipolarFilter,
 }
 
 impl Deck {
@@ -204,7 +218,16 @@ impl Deck {
             declick_frames: ((DECLICK_MS / 1000.0) * sample_rate as f32).max(1.0) as u32,
             tail: None,
             fade_in: 0,
+            eq: Eq::new(sample_rate),
+            filter: BipolarFilter::new(sample_rate),
         }
+    }
+
+    /// EQ and filter, in place on the rendered block.
+    fn shape(&mut self, frames: usize) {
+        let block = &mut self.buffer[..frames * 2];
+        self.eq.process(block);
+        self.filter.process(block);
     }
 
     /// Compare transport state before and after a command and arm the declick ramps for any
@@ -281,6 +304,7 @@ pub struct Engine {
     master_gain: Smoother,
     master_meter: PeakMeter,
     pending_drops: [Option<Arc<TrackAudio>>; PENDING_DROPS],
+    transition: Transition,
     frame_clock: u64,
     xruns: u32,
 }
@@ -292,6 +316,8 @@ impl Engine {
             trim: [0.5; 2],
             crossfader: 0.5,
             master_gain: 1.0,
+            eq: [[0.5; 3]; 2],
+            filter: [0.5; 2],
             ..Snapshot::default()
         }
     }
@@ -315,6 +341,7 @@ impl Engine {
             master_gain: Smoother::new(sample_rate, LEVEL_SMOOTHING_MS, defaults.master_gain),
             master_meter: PeakMeter::new(sample_rate),
             pending_drops: Default::default(),
+            transition: Transition::new(sample_rate),
             frame_clock: 0,
             xruns: 0,
         };
@@ -365,8 +392,10 @@ impl Engine {
             {
                 let _ = self.io.events_tx.push(EngineEvent::TrackEnded { deck: id });
             }
+            deck.shape(frames);
         }
 
+        let fx_deck = self.transition.active();
         let [a, b] = &mut self.decks;
         let mut deck_peak = [[0.0f32; 2]; 2];
         let mut master_peak = [0.0f32; 2];
@@ -374,8 +403,13 @@ impl Engine {
             let ga = a.gain.tick();
             let gb = b.gain.tick();
             let gm = self.master_gain.tick();
-            let (al, ar) = (a.buffer[2 * i] * ga, a.buffer[2 * i + 1] * ga);
-            let (bl, br) = (b.buffer[2 * i] * gb, b.buffer[2 * i + 1] * gb);
+            let (mut al, mut ar) = (a.buffer[2 * i] * ga, a.buffer[2 * i + 1] * ga);
+            let (mut bl, mut br) = (b.buffer[2 * i] * gb, b.buffer[2 * i + 1] * gb);
+            match fx_deck {
+                Some(DeckId::A) => [al, ar] = self.transition.process([al, ar]),
+                Some(DeckId::B) => [bl, br] = self.transition.process([bl, br]),
+                None => {}
+            }
             let l = (al + bl) * gm;
             let r = (ar + br) * gm;
             deck_peak[0] = [deck_peak[0][0].max(al.abs()), deck_peak[0][1].max(ar.abs())];
@@ -392,6 +426,35 @@ impl Engine {
         b.meter.update(deck_peak[1], frames);
         self.master_meter.update(master_peak, frames);
         self.frame_clock += frames as u64;
+
+        if let Outcome::Finished { deck, pause: true } = self.transition.end_of_block() {
+            // The effect already took the deck to silence: stop it without a declick tail.
+            self.decks[deck.index()].transport.pause();
+            let _ = self
+                .io
+                .events_tx
+                .push(EngineEvent::TransitionFinished { deck });
+        }
+    }
+
+    /// The deck a transition effect should take out: the playing deck that is loudest in the
+    /// master right now (channel fader × crossfader × trim).
+    fn transition_target(&self) -> Option<DeckId> {
+        let (xa, xb) = crossfader_gains(self.crossfader, self.curve);
+        let xf = [xa, xb];
+        DeckId::ALL
+            .into_iter()
+            .filter(|d| self.decks[d.index()].transport.playing)
+            .map(|d| {
+                let i = d.index();
+                (
+                    d,
+                    trim_gain(self.trim[i]) * channel_gain(self.channel_fader[i]) * xf[i],
+                )
+            })
+            .filter(|(_, level)| *level > 0.0)
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(d, _)| d)
     }
 
     fn drain_queues(&mut self) {
@@ -498,6 +561,20 @@ impl Engine {
                 self.master_target = unit(v);
                 self.master_gain.set_target(self.master_target);
             }
+            MixerCommand::Eq(id, band, v) => self.decks[id.index()].eq.set_knob(band, v),
+            MixerCommand::EqKill(id, band, kill) => self.decks[id.index()].eq.set_kill(band, kill),
+            MixerCommand::Filter(id, v) => self.decks[id.index()].filter.set_position(v),
+            MixerCommand::TransitionFx => {
+                // A running effect is cancelled on its own deck; otherwise pick the target.
+                if let Some(deck) = self
+                    .transition
+                    .active()
+                    .or_else(|| self.transition_target())
+                {
+                    self.transition.trigger(deck);
+                }
+            }
+            MixerCommand::CycleTransitionFx => self.transition.cycle(),
         }
         self.update_gain_targets();
     }
@@ -531,6 +608,13 @@ impl Engine {
             curve: self.curve,
             master_gain: self.master_target,
             master_peak: self.master_meter.value(),
+            eq: [self.decks[0].eq.knobs(), self.decks[1].eq.knobs()],
+            eq_kill: [self.decks[0].eq.kills(), self.decks[1].eq.kills()],
+            filter: [
+                self.decks[0].filter.position(),
+                self.decks[1].filter.position(),
+            ],
+            transition: self.transition.snapshot(),
             xruns: self.xruns,
         };
         self.io.snapshot_tx.write(snapshot);
@@ -756,7 +840,8 @@ mod tests {
         h.send(deck_a(DeckCommand::Pause));
         let step = max_step(&mut engine, 20, &mut prev);
         assert!(step < 0.01, "step {step}");
-        assert_eq!(prev, 0.0, "silent afterwards");
+        // The EQ filters ring out for a moment; inaudible is what matters.
+        assert!(prev.abs() < 1e-6, "silent afterwards: {prev}");
     }
 
     #[test]
@@ -815,6 +900,101 @@ mod tests {
         let step = max_step(&mut engine, 20, &mut prev);
         assert!(step < 0.02, "step {step}");
         assert!(prev < -0.99, "now playing the second half");
+    }
+
+    #[test]
+    fn eq_kill_and_filter_come_from_commands() {
+        use rille_core::EqBand;
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, dc_track(1, SR as usize * 10, 0.5))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(mix(MixerCommand::Crossfader(0.0)));
+        h.send(deck_a(DeckCommand::Play));
+        let out = settle(&mut engine);
+        assert!(out[0] > 0.4, "DC passes the neutral EQ");
+        h.send(mix(MixerCommand::EqKill(DeckId::A, EqBand::Low, true)));
+        h.send(mix(MixerCommand::Filter(DeckId::A, 0.2)));
+        let out = settle(&mut engine);
+        assert!(
+            out[0].abs() < 0.01,
+            "DC sits in the low band: killed ({})",
+            out[0]
+        );
+        let s = h.snapshot();
+        assert!(s.eq_kill[0][0]);
+        assert_eq!(s.filter[0], 0.2);
+        assert_eq!(s.eq[1], [0.5; 3], "deck B untouched");
+    }
+
+    fn sine_track(id: u64, seconds: usize) -> Arc<TrackAudio> {
+        let samples = (0..SR as usize * seconds)
+            .flat_map(|i| {
+                let v = 0.5 * (i as f32 * 440.0 * std::f32::consts::TAU / SR as f32).sin();
+                [v, v]
+            })
+            .collect();
+        Arc::new(TrackAudio::new(id, SR, samples))
+    }
+
+    #[test]
+    fn transition_fx_takes_out_the_loudest_playing_deck() {
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, sine_track(1, 30))
+            .map_err(|_| ())
+            .unwrap();
+        h.load(DeckId::B, sine_track(2, 30))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(deck_a(DeckCommand::Play));
+        h.send(Command::Deck(DeckId::B, DeckCommand::Play));
+        h.send(mix(MixerCommand::Crossfader(0.8))); // B is louder
+        settle(&mut engine);
+        h.send(mix(MixerCommand::TransitionFx));
+        let mut out = vec![0.0; 256 * 2];
+        engine.process(&mut out, 2);
+        assert_eq!(h.snapshot().transition.deck, Some(DeckId::B));
+        for _ in 0..(12 * SR as usize / 256) {
+            engine.process(&mut out, 2);
+        }
+        let s = h.snapshot();
+        assert!(!s.decks[1].playing, "B paused after the echoes");
+        assert!(s.decks[0].playing, "A keeps playing");
+        assert_eq!(s.transition.deck, None);
+        let mut finished = false;
+        while let Some(e) = h.next_event() {
+            finished |= e == EngineEvent::TransitionFinished { deck: DeckId::B };
+        }
+        assert!(finished);
+    }
+
+    #[test]
+    fn transition_fx_needs_a_playing_deck() {
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, sine_track(1, 5)).map_err(|_| ()).unwrap();
+        h.send(mix(MixerCommand::TransitionFx));
+        engine.process(&mut [0.0; 512], 2);
+        assert_eq!(h.snapshot().transition.deck, None);
+    }
+
+    #[test]
+    fn pressing_again_cancels_and_keeps_playing() {
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, sine_track(1, 30))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(deck_a(DeckCommand::Play));
+        h.send(mix(MixerCommand::TransitionFx));
+        settle(&mut engine);
+        h.send(mix(MixerCommand::TransitionFx));
+        let mut out = vec![0.0; 256 * 2];
+        for _ in 0..(8 * SR as usize / 256) {
+            engine.process(&mut out, 2);
+        }
+        let s = h.snapshot();
+        assert!(s.decks[0].playing);
+        assert_eq!(s.transition.deck, None);
+        assert!(s.master_peak[0] > 0.3, "dry signal back");
     }
 
     #[test]

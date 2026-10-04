@@ -1,4 +1,5 @@
-use crate::command::CrossfaderCurve;
+use crate::DeckId;
+use crate::command::{CrossfaderCurve, TransitionKind};
 
 /// State of one deck as seen at the end of an audio block.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -18,6 +19,16 @@ pub struct DeckSnapshot {
     pub peak: [f32; 2],
 }
 
+/// State of the transition effect.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct TransitionSnapshot {
+    pub kind: TransitionKind,
+    /// Deck the effect runs on, `None` when idle.
+    pub deck: Option<DeckId>,
+    /// The effect was cancelled and only its tail is still sounding.
+    pub releasing: bool,
+}
+
 /// Engine state handed from the audio thread to the rest of the app. `Copy`, no heap data.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Snapshot {
@@ -31,6 +42,11 @@ pub struct Snapshot {
     pub curve: CrossfaderCurve,
     pub master_gain: f32,
     pub master_peak: [f32; 2],
+    /// EQ knob positions per deck: low, mid, high.
+    pub eq: [[f32; 3]; 2],
+    pub eq_kill: [[bool; 3]; 2],
+    pub filter: [f32; 2],
+    pub transition: TransitionSnapshot,
     /// Output callbacks that arrived late (device under-runs).
     pub xruns: u32,
 }

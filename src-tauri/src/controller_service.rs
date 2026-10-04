@@ -140,18 +140,42 @@ pub fn deck_lamps(snapshot: &Snapshot, deck: DeckId) -> DeckLamps {
     }
 }
 
+/// The engine's values of every absolute control on the DDJ-200 (hardware orientation, 0..1).
+pub fn software_values(s: &Snapshot) -> Vec<(rille_midi::TakeoverKey, f32)> {
+    let mut v = vec![((Scope::Global, Control::Crossfader), s.crossfader)];
+    for deck in DeckId::ALL {
+        let i = deck.index();
+        let d = Scope::Deck(deck);
+        v.extend([
+            ((d, Control::ChannelFader), s.channel_fader[i]),
+            ((d, Control::EqLow), s.eq[i][0]),
+            ((d, Control::EqMid), s.eq[i][1]),
+            ((d, Control::EqHi), s.eq[i][2]),
+            ((d, Control::ColorFx), s.filter[i]),
+        ]);
+    }
+    v
+}
+
 pub fn lamp_state(snapshot: &Snapshot) -> LampState {
+    let t = snapshot.transition;
     LampState {
         decks: [
             deck_lamps(snapshot, DeckId::A),
             deck_lamps(snapshot, DeckId::B),
         ],
+        // Lit while the effect runs, blinking while a cancelled effect's tail decays.
+        transition_fx: match (t.deck, t.releasing) {
+            (None, _) => Lamp::Off,
+            (Some(_), false) => Lamp::On,
+            (Some(_), true) => Lamp::Blink,
+        },
         ..LampState::default()
     }
 }
 
 /// Engine commands for a controller action. Actions whose features arrive in later milestones
-/// (tempo, EQ, sync, pads, …) produce nothing yet.
+/// (tempo, sync, pads, …) produce nothing yet.
 pub fn commands_for(action: ControllerAction) -> Vec<Command> {
     use ControllerAction as A;
     let deck = |d, c| Command::Deck(d, c);
@@ -170,6 +194,21 @@ pub fn commands_for(action: ControllerAction) -> Vec<Command> {
             vec![Command::Mixer(MixerCommand::ChannelFader(d, value))]
         }
         A::Crossfader(v) => vec![Command::Mixer(MixerCommand::Crossfader(v))],
+        A::Eq {
+            deck: d,
+            band,
+            value,
+        } => {
+            let band = match band {
+                rille_midi::ddj200::EqBand::Hi => rille_core::EqBand::High,
+                rille_midi::ddj200::EqBand::Mid => rille_core::EqBand::Mid,
+                rille_midi::ddj200::EqBand::Low => rille_core::EqBand::Low,
+            };
+            vec![Command::Mixer(MixerCommand::Eq(d, band, value))]
+        }
+        A::Filter { deck: d, value } => vec![Command::Mixer(MixerCommand::Filter(d, value))],
+        A::TransitionFx { pressed: true } => vec![Command::Mixer(MixerCommand::TransitionFx)],
+        A::CycleTransitionFx => vec![Command::Mixer(MixerCommand::CycleTransitionFx)],
         A::FaderStart {
             deck: d,
             play: true,
@@ -327,12 +366,8 @@ impl Worker {
     /// continuously: the snapshot lags behind the hardware, and diffing it would make a fast
     /// fader move release itself.
     fn seed_software(&mut self, s: &Snapshot) {
-        self.session
-            .seed_software((Scope::Global, Control::Crossfader), s.crossfader);
-        for deck in DeckId::ALL {
-            let key = (Scope::Deck(deck), Control::ChannelFader);
-            self.session
-                .seed_software(key, s.channel_fader[deck.index()]);
+        for (key, value) in software_values(s) {
+            self.session.seed_software(key, value);
         }
     }
 
@@ -448,6 +483,28 @@ mod tests {
     }
 
     #[test]
+    fn every_absolute_control_but_tempo_is_seeded_from_the_engine() {
+        let mut s = Snapshot::default();
+        s.eq[1] = [0.1, 0.2, 0.3];
+        s.filter[0] = 0.9;
+        let v = software_values(&s);
+        assert!(v.contains(&((Scope::Deck(DeckId::B), Control::EqHi), 0.3)));
+        assert!(v.contains(&((Scope::Deck(DeckId::A), Control::ColorFx), 0.9)));
+        // tempo comes with M4; until then the session's default (centre) applies
+        assert_eq!(v.len(), 1 + 2 * 5);
+    }
+
+    #[test]
+    fn transition_lamp_follows_the_effect() {
+        let mut s = Snapshot::default();
+        assert_eq!(lamp_state(&s).transition_fx, Lamp::Off);
+        s.transition.deck = Some(DeckId::A);
+        assert_eq!(lamp_state(&s).transition_fx, Lamp::On);
+        s.transition.releasing = true;
+        assert_eq!(lamp_state(&s).transition_fx, Lamp::Blink);
+    }
+
+    #[test]
     fn actions_become_engine_commands() {
         use ControllerAction as A;
         assert_eq!(
@@ -471,6 +528,26 @@ mod tests {
         assert!(
             commands_for(A::LibraryScroll(1)).is_empty(),
             "arrives with the library"
+        );
+        assert_eq!(
+            commands_for(A::Eq {
+                deck: DeckId::B,
+                band: rille_midi::ddj200::EqBand::Hi,
+                value: 0.25
+            }),
+            [Command::Mixer(MixerCommand::Eq(
+                DeckId::B,
+                rille_core::EqBand::High,
+                0.25
+            ))]
+        );
+        assert_eq!(
+            commands_for(A::TransitionFx { pressed: true }),
+            [Command::Mixer(MixerCommand::TransitionFx)]
+        );
+        assert!(
+            commands_for(A::TransitionFx { pressed: false }).is_empty(),
+            "press, not release"
         );
     }
 

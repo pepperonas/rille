@@ -45,8 +45,8 @@
 <sub>Die vollständige Badge-Übersicht steht im [englischen README](README.md).</sub>
 
 > **Stand: frühe Entwicklung (v0.1.0).** Zwei Decks spielen Dateien aus dem Finder, mit Cue nach
-> Pioneer-Art, Kanalfadern, Crossfader und Pegeln — bedienbar mit Maus, Tastatur und DDJ-200.
-> EQ, Filter, Tempo/Keylock, Library, Waveforms und Beat-Funktionen folgen Meilenstein für
+> Pioneer-Art, Isolator-EQ, Filter, Transition-FX, Kanalfadern, Crossfader und Pegeln — bedienbar
+> mit Maus, Tastatur und DDJ-200. Tempo/Keylock, Library, Waveforms und Beat-Funktionen folgen Meilenstein für
 > Meilenstein (siehe [Roadmap](#%EF%B8%8F-roadmap)). Ein fertiges Release gibt es noch nicht.
 
 ---
@@ -97,6 +97,13 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
   Shift + Cue springt an den Anfang.
 - **Mixer** — Kanalfader mit DJ-Kennlinie, Master, Crossfader mit drei Kurven (Blend =
   konstante Leistung, Linear, Cut zum Scratchen), Segment-Pegel pro Kanal und Master.
+- **Isolator-EQ** — Hi / Mid / Low pro Kanal mit Linkwitz-Riley-Weichen bei 200 Hz und 2 kHz
+  (neutral flach); Regler ganz links oder Klick auf den Bandnamen = Kill, bis +6 dB Anhebung.
+- **Bipolares Filter** — ein Regler pro Kanal: links schließt ein Tiefpass, rechts öffnet ein
+  Hochpass, in der Mitte echter Bypass.
+- **Transition-FX** — eine Taste nimmt das lautere spielende Deck aus dem Mix: *Echo-Out* (das
+  Deck blendet aus, sein letzter Moment hallt nach) oder *Filter-Out* (ein Hochpass fährt hoch).
+  Danach pausiert das Deck; nochmal drücken bricht ab.
 - **Klickfreier Transport** — Stopp, Start, Cue-Sprünge und Seeks blenden über 4 ms statt die
   Wellenform abzuschneiden.
 - **Audio-Einstellungen** — Ausgabegerät, Puffer 64–2048, gemessene Latenz, Aussetzer-Zähler;
@@ -109,8 +116,7 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
 - **„Über rille“** — Version, Spenden- und Bewerten-Button, Link zum Quellcode; externe Links
   dürfen nur die freigegebenen Adressen öffnen.
 
-**Als Nächstes** — EQ mit Kill, bipolares Filter und Transition-FX (M3), Tempo/Keylock/Scratch
-(M4), Library mit BPM- und Beatgrid-Analyse (M5), Waveforms (M6), Sync, Hot Cues, Loops und Pads
+**Als Nächstes** — Tempo/Keylock/Scratch (M4), Library mit BPM- und Beatgrid-Analyse (M5), Waveforms (M6), Sync, Hot Cues, Loops und Pads
 (M7), Vorhören im Kopfhörer (M8). Siehe [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
@@ -129,11 +135,11 @@ Vinyl-Modus und MIDI-Monitor in den Einstellungen.
 | Jog-Rand | Pitch-Bend | Library-Navigation | M4 / M5 |
 | Tempo-Fader | Tempo (oben langsamer, wie aufgedruckt) | — | M4 |
 | Beat Sync | kurz: Sync · lang: Sync-Lock | Tempo-Bereich wechseln (±6/10/16 %/Wide) | M7 |
-| EQ Hi / Mid / Low | 3-Band-Isolator | — | M3 |
-| CFX | Bipolares Filter (links Lowpass, rechts Highpass) | — | M3 |
+| EQ Hi / Mid / Low | 3-Band-Isolator | — | ✅ |
+| CFX | Bipolares Filter (links Lowpass, rechts Highpass) | — | ✅ |
 | Kopfhörer-Cue | Kanal vorhören | Markierten Track laden | M8 / M5 |
 | Master Cue | Master im Kopfhörer | — | M8 |
-| Transition FX | Echo-Out aufs aktive Deck | Effekt wechseln | M3 |
+| Transition FX | Echo-Out / Filter-Out aufs lautere spielende Deck; nochmal = abbrechen | Effekt wechseln | ✅ |
 | Pads 1–8 | Hot Cue / Beat Loop / Beat Jump | Löschen / Loop verlassen | M7 |
 
 **Wie der Controller angebunden ist**
@@ -171,6 +177,9 @@ Alles funktioniert auch ohne Controller:
 | Play/Pause, Cue | Klicken, oder Knopf fokussieren und Leertaste / Enter (Cue: halten = vorhören) |
 | Zum Anfang | Shift + Klick auf Cue |
 | Fader | Ziehen; Pfeiltasten (Shift = große Schritte), Pos1 / Ende; Doppelklick setzt zurück |
+| EQ-/Filter-Regler | Hoch/runter ziehen (Shift = fein), Mausrad, Pfeiltasten; Doppelklick oder Entf = Mitte |
+| EQ-Kill | Klick auf den Bandnamen (HI / MID / LOW) unter dem Regler |
+| Transition-FX | Taste unter dem Crossfader; ⇄ daneben wechselt den Effekt |
 | Crossfader-Kurve | Blend / Linear / Cut unter dem Crossfader |
 | Einstellungen | ⚙︎ in der Titelleiste oder Klick auf den Audio-/Controller-Status |
 | MIDI-Monitor | ⌘⌥M |
@@ -326,7 +335,7 @@ rille/
 | M0 | Fundament: Workspace, Tauri-Shell, Tokens, CI | ✅ |
 | M1 | Engine-Kern: Wiedergabe, Cue, Mixer, Pegel, Geräte | ✅ |
 | M2 | Pioneer DDJ-200: Mapping, LEDs, Takeover, Hotplug, Monitor | ✅ (Hardware-Abnahme offen) |
-| M3 | Isolator-EQ mit Kill, bipolares Filter, Transition-FX (Echo-Out) | 🚧 DSP fertig |
+| M3 | Isolator-EQ mit Kill, bipolares Filter, Transition-FX (Echo-Out, Filter-Out) | ✅ |
 | M4 | Tempo-Bereiche, Keylock (Signalsmith Stretch), Pitch-Bend, Scratch, Reverse | ⏳ |
 | M5 | Library: Import, SQLite, BPM-/Beatgrid-Analyse, Suche, Drag & Drop | ⏳ |
 | M6 | Waveforms (Übersicht + scrollende Detailansicht, Frequenzfarben), Deck-Oberfläche | ⏳ |

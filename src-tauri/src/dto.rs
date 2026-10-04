@@ -1,7 +1,9 @@
 //! Data shapes exchanged with the frontend (camelCase JSON). Kept separate from the engine
 //! types so the engine never depends on serde or Tauri.
 
-use rille_core::{CrossfaderCurve, DeckCommand, DeckId, MixerCommand, Snapshot};
+use rille_core::{
+    CrossfaderCurve, DeckCommand, DeckId, EqBand, MixerCommand, Snapshot, TransitionKind,
+};
 use rille_engine::output::DeviceInfo;
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +60,40 @@ impl From<CrossfaderCurve> for Curve {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Band {
+    Low,
+    Mid,
+    High,
+}
+
+impl From<Band> for EqBand {
+    fn from(b: Band) -> EqBand {
+        match b {
+            Band::Low => EqBand::Low,
+            Band::Mid => EqBand::Mid,
+            Band::High => EqBand::High,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Transition {
+    EchoOut,
+    FilterOut,
+}
+
+impl From<TransitionKind> for Transition {
+    fn from(k: TransitionKind) -> Transition {
+        match k {
+            TransitionKind::EchoOut => Transition::EchoOut,
+            TransitionKind::FilterOut => Transition::FilterOut,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum DeckAction {
@@ -96,6 +132,11 @@ pub enum MixerAction {
     Crossfader { value: f32 },
     Curve { curve: Curve },
     MasterGain { value: f32 },
+    Eq { deck: Deck, band: Band, value: f32 },
+    EqKill { deck: Deck, band: Band, kill: bool },
+    Filter { deck: Deck, value: f32 },
+    TransitionFx,
+    CycleTransitionFx,
 }
 
 impl MixerAction {
@@ -108,6 +149,17 @@ impl MixerAction {
             }
             MixerAction::Crossfader { value } => {
                 Some(((Scope::Global, Control::Crossfader), value))
+            }
+            MixerAction::Eq { deck, band, value } => {
+                let control = match band {
+                    Band::Low => Control::EqLow,
+                    Band::Mid => Control::EqMid,
+                    Band::High => Control::EqHi,
+                };
+                Some(((Scope::Deck(deck.into()), control), value))
+            }
+            MixerAction::Filter { deck, value } => {
+                Some(((Scope::Deck(deck.into()), Control::ColorFx), value))
             }
             _ => None,
         }
@@ -124,6 +176,15 @@ impl From<MixerAction> for MixerCommand {
             MixerAction::Crossfader { value } => MixerCommand::Crossfader(value),
             MixerAction::Curve { curve } => MixerCommand::CrossfaderCurve(curve.into()),
             MixerAction::MasterGain { value } => MixerCommand::MasterGain(value),
+            MixerAction::Eq { deck, band, value } => {
+                MixerCommand::Eq(deck.into(), band.into(), value)
+            }
+            MixerAction::EqKill { deck, band, kill } => {
+                MixerCommand::EqKill(deck.into(), band.into(), kill)
+            }
+            MixerAction::Filter { deck, value } => MixerCommand::Filter(deck.into(), value),
+            MixerAction::TransitionFx => MixerCommand::TransitionFx,
+            MixerAction::CycleTransitionFx => MixerCommand::CycleTransitionFx,
         }
     }
 }
@@ -153,8 +214,21 @@ pub struct StateFrame {
     pub curve: Curve,
     pub master_gain: f32,
     pub master_peak: [f32; 2],
+    /// EQ knob positions per deck: low, mid, high.
+    pub eq: [[f32; 3]; 2],
+    pub eq_kill: [[bool; 3]; 2],
+    pub filter: [f32; 2],
+    pub transition: TransitionFrame,
     pub xruns: u32,
     pub dropped_commands: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransitionFrame {
+    pub kind: Transition,
+    pub deck: Option<Deck>,
+    pub releasing: bool,
 }
 
 impl StateFrame {
@@ -178,6 +252,14 @@ impl StateFrame {
             curve: s.curve.into(),
             master_gain: s.master_gain,
             master_peak: s.master_peak,
+            eq: s.eq,
+            eq_kill: s.eq_kill,
+            filter: s.filter,
+            transition: TransitionFrame {
+                kind: s.transition.kind.into(),
+                deck: s.transition.deck.map(Deck::from),
+                releasing: s.transition.releasing,
+            },
             xruns: s.xruns,
             dropped_commands,
         }
@@ -263,6 +345,15 @@ mod tests {
             MixerCommand::from(a),
             MixerCommand::ChannelFader(DeckId::B, 0.5)
         );
+        let a: MixerAction =
+            serde_json::from_str(r#"{"type":"eqKill","deck":"a","band":"low","kill":true}"#)
+                .unwrap();
+        assert_eq!(
+            MixerCommand::from(a),
+            MixerCommand::EqKill(DeckId::A, EqBand::Low, true)
+        );
+        let a: MixerAction = serde_json::from_str(r#"{"type":"transitionFx"}"#).unwrap();
+        assert_eq!(MixerCommand::from(a), MixerCommand::TransitionFx);
         let a: MixerAction = serde_json::from_str(r#"{"type":"curve","curve":"cut"}"#).unwrap();
         assert_eq!(
             MixerCommand::from(a),
@@ -290,6 +381,28 @@ mod tests {
             None,
             "not on the DDJ-200"
         );
+        assert_eq!(
+            MixerAction::Eq {
+                deck: Deck::A,
+                band: Band::High,
+                value: 0.7
+            }
+            .takeover(),
+            Some(((Scope::Deck(DeckId::A), Control::EqHi), 0.7))
+        );
+        assert_eq!(
+            MixerAction::Filter {
+                deck: Deck::B,
+                value: 0.2
+            }
+            .takeover(),
+            Some(((Scope::Deck(DeckId::B), Control::ColorFx), 0.2))
+        );
+        assert_eq!(
+            MixerAction::TransitionFx.takeover(),
+            None,
+            "a button, not a fader"
+        );
     }
 
     #[test]
@@ -306,6 +419,10 @@ mod tests {
             "curve",
             "masterGain",
             "masterPeak",
+            "eq",
+            "eqKill",
+            "filter",
+            "transition",
             "xruns",
             "droppedCommands",
         ] {

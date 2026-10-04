@@ -7,6 +7,13 @@ All notable changes to rille are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- M3 mixer DSP: three-band isolator EQ per channel (Linkwitz-Riley 4th order at 200 Hz /
+  2 kHz, flat when neutral, kill per band, up to +6 dB), bipolar channel filter (TPT
+  state-variable filter, bit-exact bypass in the centre), and transition FX on the louder
+  playing deck — Echo-Out and Filter-Out, cancel by pressing again, deck pauses afterwards.
+- DDJ-200: EQ knobs, CFX and Transition FX (+ Shift to change the effect) are live; the
+  Transition FX LED lights while the effect runs and blinks while a cancelled tail decays.
+- Knob component (drag, fine drag with Shift, wheel, keyboard, double-click to centre).
 - README with banner, screenshots and self-updating badges (version, lines of code, test
   code, unit tests per suite); German translation in `README.de.md`.
 - `pnpm badges` (`tools/stats.mjs`) measures the badge numbers; CI refreshes

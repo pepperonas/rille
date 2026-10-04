@@ -54,14 +54,15 @@ pub fn shape(position: f32) -> (Mode, f32, f32) {
     }
 }
 
+/// One channel of the state-variable filter.
 #[derive(Debug, Clone, Copy, Default)]
-struct Svf {
+pub(crate) struct Svf {
     ic1: f32,
     ic2: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct SvfCoefficients {
+pub(crate) struct SvfCoefficients {
     a1: f32,
     a2: f32,
     a3: f32,
@@ -69,7 +70,7 @@ struct SvfCoefficients {
 }
 
 impl SvfCoefficients {
-    fn new(cutoff: f32, sample_rate: u32) -> SvfCoefficients {
+    pub(crate) fn new(cutoff: f32, sample_rate: u32) -> SvfCoefficients {
         let nyquist_safe = cutoff.min(sample_rate as f32 * 0.45);
         let g = (PI * nyquist_safe / sample_rate as f32).tan();
         let k = 1.0 / Q;
@@ -82,7 +83,7 @@ impl SvfCoefficients {
 
 impl Svf {
     #[inline]
-    fn process(&mut self, x: f32, c: &SvfCoefficients, mode: Mode) -> f32 {
+    pub(crate) fn process(&mut self, x: f32, c: &SvfCoefficients, mode: Mode) -> f32 {
         let v3 = x - self.ic2;
         let v1 = c.a1 * self.ic1 + c.a2 * v3;
         let v2 = self.ic2 + c.a2 * self.ic1 + c.a3 * v3;

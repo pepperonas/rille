@@ -132,3 +132,44 @@ test('about dialog offers donating and rating celox.io', async ({ page }) => {
   expect(opened[1]).toBe('https://g.page/r/CXgdRV3QysvxEBM/review');
   await expect(dialog).toContainText(`© ${new Date().getFullYear()} Martin Pfeffer | celox.io`);
 });
+
+test('EQ kill, filter and transition FX from the mixer', async ({ page }) => {
+  await page.goto('/?demo');
+  await expect(deck(page, 'b').getByRole('heading')).toHaveText('Neon Avenue (Club Edit)');
+  const kill = page.getByRole('button', { name: 'Bässe Kanal 1 stummschalten (Kill)' });
+  await kill.click();
+  await expect(kill).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('slider', { name: 'Bässe Kanal 1' })).toHaveAttribute('aria-valuetext', 'Kill');
+
+  const filter = page.getByRole('slider', { name: 'Filter Kanal 2' });
+  await filter.focus();
+  await page.keyboard.press('End');
+  await expect(filter).toHaveAttribute('aria-valuetext', 'Hochpass 100 %');
+  await filter.dblclick();
+  await expect(filter).toHaveAttribute('aria-valuetext', 'aus');
+
+  const fx = page.getByRole('button', { name: /^Transition FX/ });
+  await fx.click();
+  await expect(fx).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: /^Effekt wechseln/ })).toBeDisabled();
+});
+
+for (const [width, height] of [
+  [1440, 900],
+  [1024, 680],
+] as const) {
+  test(`mixer fits without overlap at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto('/?demo');
+    await expect(deck(page, 'a').getByRole('heading')).toBeVisible();
+    const fader = await page.getByRole('slider', { name: 'Kanalfader Kanal 1' }).boundingBox();
+    const cross = await page.getByRole('slider', { name: 'Crossfader' }).boundingBox();
+    const fx = await page.getByRole('button', { name: /^Transition FX/ }).boundingBox();
+    const mixer = await page.getByRole('region', { name: 'Mixer' }).boundingBox();
+    expect(fader && cross && fx && mixer).toBeTruthy();
+    if (!fader || !cross || !fx || !mixer) return;
+    expect(fader.y + fader.height).toBeLessThanOrEqual(cross.y);
+    expect(fader.height).toBeGreaterThanOrEqual(60);
+    expect(fx.y + fx.height).toBeLessThanOrEqual(mixer.y + mixer.height);
+  });
+}

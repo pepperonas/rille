@@ -2,6 +2,14 @@
 
 export type Deck = 'a' | 'b';
 export type Curve = 'smooth' | 'linear' | 'cut';
+export type Band = 'low' | 'mid' | 'high';
+export type TransitionKind = 'echoOut' | 'filterOut';
+
+export interface TransitionFrame {
+  kind: TransitionKind;
+  deck: Deck | null;
+  releasing: boolean;
+}
 
 export interface DeckFrame {
   trackId: number | null;
@@ -23,6 +31,12 @@ export interface StateFrame {
   curve: Curve;
   masterGain: number;
   masterPeak: [number, number];
+  /** EQ knob positions per deck: low, mid, high (0 kill, 0.5 unity, 1 +6 dB). */
+  eq: [[number, number, number], [number, number, number]];
+  eqKill: [[boolean, boolean, boolean], [boolean, boolean, boolean]];
+  /** Bipolar filter per deck: 0 low-pass closed, 0.5 off, 1 high-pass open. */
+  filter: [number, number];
+  transition: TransitionFrame;
   xruns: number;
   droppedCommands: number;
 }
@@ -77,7 +91,12 @@ export type MixerAction =
   | { type: 'trim'; deck: Deck; value: number }
   | { type: 'crossfader'; value: number }
   | { type: 'curve'; curve: Curve }
-  | { type: 'masterGain'; value: number };
+  | { type: 'masterGain'; value: number }
+  | { type: 'eq'; deck: Deck; band: Band; value: number }
+  | { type: 'eqKill'; deck: Deck; band: Band; kill: boolean }
+  | { type: 'filter'; deck: Deck; value: number }
+  | { type: 'transitionFx' }
+  | { type: 'cycleTransitionFx' };
 
 export interface ControllerStatus {
   connected: boolean;

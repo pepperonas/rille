@@ -14,12 +14,7 @@ pub const MID_HIGH_HZ: f64 = 2000.0;
 pub const MAX_BOOST_DB: f32 = 6.0;
 const GAIN_SMOOTHING_MS: f32 = 10.0;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Band {
-    Low = 0,
-    Mid = 1,
-    High = 2,
-}
+pub use rille_core::EqBand as Band;
 
 /// Knob position (0..1) → linear band gain. 0 = kill, 0.5 = unity, 1 = +6 dB. The cut half is
 /// squared so most of the travel is musically useful (-12 dB at a quarter).

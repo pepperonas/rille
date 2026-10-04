@@ -1,0 +1,92 @@
+.wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.knob {
+  width: var(--size-knob);
+  height: var(--size-knob);
+  border-radius: var(--shape-full);
+  touch-action: none;
+  cursor: ns-resize;
+  outline: none;
+}
+
+.knob:focus-visible {
+  outline: var(--stroke-thick) solid var(--md-primary);
+  outline-offset: var(--stroke-thick);
+}
+
+.knob svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.track {
+  fill: none;
+  stroke: var(--md-surface-container-highest);
+  stroke-width: var(--size-knob-stroke);
+  stroke-linecap: round;
+}
+
+.value {
+  fill: none;
+  stroke: var(--accent, var(--md-primary));
+  stroke-width: var(--size-knob-stroke);
+  stroke-linecap: round;
+  transition: stroke var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.cap {
+  fill: var(--md-surface-container-highest);
+  transition: fill var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.knob:hover .cap {
+  fill: color-mix(in srgb, var(--md-on-surface) calc(var(--state-hover) * 100%), var(--md-surface-container-highest));
+}
+
+.pointer {
+  stroke: var(--md-on-surface);
+  stroke-width: var(--stroke-thick);
+  stroke-linecap: round;
+}
+
+.caption {
+  font: var(--type-label-s);
+  letter-spacing: var(--tracking-caps);
+  color: var(--md-on-surface-variant);
+}
+
+.wrap[data-muted] .value {
+  stroke: var(--md-outline);
+}
+
+.wrap[data-muted] .caption {
+  color: var(--md-error);
+}
+
+.captionButton {
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: 0 var(--space-2);
+  background: transparent;
+  font: var(--type-label-s);
+  letter-spacing: var(--tracking-caps);
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  transition: background-color var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.captionButton:hover {
+  background: color-mix(in srgb, var(--md-on-surface) calc(var(--state-hover) * 100%), transparent);
+}
+
+.captionButton[aria-pressed='true'] {
+  background: var(--md-error-container);
+  color: var(--md-on-error-container);
+}

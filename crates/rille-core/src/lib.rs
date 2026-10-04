@@ -6,7 +6,7 @@ mod deck;
 mod snapshot;
 mod track;
 
-pub use command::{Command, CrossfaderCurve, DeckCommand, MixerCommand};
+pub use command::{Command, CrossfaderCurve, DeckCommand, EqBand, MixerCommand, TransitionKind};
 pub use deck::DeckId;
-pub use snapshot::{DeckSnapshot, Snapshot};
+pub use snapshot::{DeckSnapshot, Snapshot, TransitionSnapshot};
 pub use track::TrackAudio;

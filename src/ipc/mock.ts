@@ -2,6 +2,7 @@
 // synthetic tracks so the UI can be developed and tested without Tauri. Not used in the app.
 import type {
   AudioStatus,
+  Band,
   Backend,
   BackendEvents,
   Deck,
@@ -12,6 +13,7 @@ import type {
 } from './types';
 
 const RATE = 48_000;
+const BANDS: Band[] = ['low', 'mid', 'high'];
 const TRACK_SECONDS = 210;
 
 type MockDeck = DeckFrame;
@@ -55,6 +57,18 @@ export function createMockBackend(): Backend {
     curve: 'smooth' as StateFrame['curve'],
     masterGain: 1,
     frameClock: 0,
+    eq: [
+      [0.5, 0.5, 0.5],
+      [0.5, 0.5, 0.5],
+    ] as StateFrame['eq'],
+    eqKill: [
+      [false, false, false],
+      [false, false, false],
+    ] as StateFrame['eqKill'],
+    filter: [0.5, 0.5] as [number, number],
+    transition: { kind: 'echoOut', deck: null, releasing: false } as StateFrame['transition'],
+    /** performance.now() when the running transition started. */
+    transitionStart: 0,
   };
   let nextId = 1;
   // `?demo`: both decks loaded and playing, a controller "connected" — for screenshots.
@@ -91,6 +105,15 @@ export function createMockBackend(): Backend {
     const frames = Math.round(((now - last) / 1000) * RATE);
     last = now;
     state.frameClock += frames;
+    // Simulated transition: runs ~3 s (release ~0.5 s), then pauses its deck.
+    const t = state.transition;
+    if (t.deck) {
+      const age = now - state.transitionStart;
+      if (t.releasing ? age > 500 : age > 3000) {
+        if (!t.releasing) decks[idx(t.deck)].playing = false;
+        state.transition = { ...t, deck: null, releasing: false };
+      }
+    }
     decks.forEach((d, i) => {
       if (d.playing) {
         d.position = Math.min(d.frames, d.position + frames);
@@ -101,7 +124,9 @@ export function createMockBackend(): Backend {
         }
       }
       const level = d.playing ? 0.35 + 0.3 * Math.abs(Math.sin(now / 230 + i)) : 0;
-      const gain = (state.channelFader[i] ?? 1) ** 2;
+      const fx = state.transition.deck === (i === 0 ? 'a' : 'b') && !state.transition.releasing;
+      const fxGain = fx ? Math.max(0, 1 - (now - state.transitionStart) / 3000) : 1;
+      const gain = (state.channelFader[i] ?? 1) ** 2 * fxGain;
       d.peak = [level * gain, level * gain * 0.95];
     });
     onFrame?.(frame());
@@ -128,6 +153,10 @@ export function createMockBackend(): Backend {
       curve: state.curve,
       masterGain: state.masterGain,
       masterPeak: [peak, peak],
+      eq: [[...state.eq[0]], [...state.eq[1]]],
+      eqKill: [[...state.eqKill[0]], [...state.eqKill[1]]],
+      filter: [...state.filter],
+      transition: { ...state.transition },
       xruns: 0,
       droppedCommands: 0,
     };
@@ -200,6 +229,40 @@ export function createMockBackend(): Backend {
         break;
       case 'masterGain':
         state.masterGain = unit(action.value);
+        break;
+      case 'eq':
+        state.eq[idx(action.deck)][BANDS.indexOf(action.band)] = unit(action.value);
+        break;
+      case 'eqKill':
+        state.eqKill[idx(action.deck)][BANDS.indexOf(action.band)] = action.kill;
+        break;
+      case 'filter':
+        state.filter[idx(action.deck)] = unit(action.value);
+        break;
+      case 'transitionFx': {
+        const t = state.transition;
+        if (t.deck) {
+          state.transition = { ...t, releasing: true };
+          state.transitionStart = performance.now();
+          break;
+        }
+        const loudest = ([0, 1] as const)
+          .filter((i) => decks[i].playing)
+          .map((i) => ({ i, level: (state.channelFader[i] ?? 0) ** 2 * (i === 0 ? 1 - state.crossfader : state.crossfader) }))
+          .sort((a, b) => b.level - a.level)[0];
+        if (loudest) {
+          state.transition = { ...t, deck: loudest.i === 0 ? 'a' : 'b', releasing: false };
+          state.transitionStart = performance.now();
+        }
+        break;
+      }
+      case 'cycleTransitionFx':
+        if (!state.transition.deck) {
+          state.transition = {
+            ...state.transition,
+            kind: state.transition.kind === 'echoOut' ? 'filterOut' : 'echoOut',
+          };
+        }
         break;
     }
   }

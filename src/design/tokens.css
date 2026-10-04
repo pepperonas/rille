@@ -84,10 +84,13 @@
   --size-fader-thickness: 28px;
   --size-fader-rail: 6px;
   --size-fader-handle: 14px;
-  --size-fader-min-length: 120px;
+  --size-fader-min-length: 96px;
   --size-play-button: 72px;
   --size-transport-button: 56px;
   --size-meter: 8px;
+  --size-knob: 36px;
+  --size-knob-stroke: 3px;
+  --size-kill: 22px;
   --size-switch-width: 52px;
   --size-switch-height: 32px;
 
@@ -100,12 +103,20 @@
   --tracking-caps: 0.08em;
 
   /* Layout */
-  --layout-library-min: 200px;
-  --layout-library-share: 38%;
+  --layout-library-min: 150px;
+  --layout-library-share: 30%;
   --layout-mixer-min: 220px;
   --layout-mixer-max: 300px;
   --titlebar-height: 38px;
   --titlebar-inset-left: 80px; /* room for the native traffic lights */
+}
+
+/* Short windows (down to the 680 px minimum): denser mixer controls. */
+@media (max-height: 760px) {
+  :root {
+    --size-knob: 30px;
+    --size-fader-min-length: 72px;
+  }
 }
 
 :root[data-theme='light'] {

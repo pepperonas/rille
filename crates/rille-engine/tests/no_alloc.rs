@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use assert_no_alloc::{AllocDisabler, assert_no_alloc, reset_violation_count, violation_count};
-use rille_core::{Command, DeckCommand, DeckId, MixerCommand, TrackAudio};
+use rille_core::{Command, DeckCommand, DeckId, EqBand, MixerCommand, TrackAudio};
 use rille_engine::engine_pair;
 
 #[global_allocator]
@@ -58,6 +58,23 @@ fn process_never_allocates() {
             }
             40 => {
                 handle.send(Command::Deck(DeckId::B, DeckCommand::Unload));
+            }
+            5 => {
+                let v = (block % 11) as f32 / 10.0;
+                handle.send(Command::Mixer(MixerCommand::Eq(DeckId::A, EqBand::Mid, v)));
+                handle.send(Command::Mixer(MixerCommand::EqKill(
+                    DeckId::A,
+                    EqBand::Low,
+                    block % 100 == 5,
+                )));
+                handle.send(Command::Mixer(MixerCommand::Filter(DeckId::A, 1.0 - v)));
+            }
+            15 => {
+                // Start or cancel a transition effect; cycle the kind now and then.
+                handle.send(Command::Mixer(MixerCommand::TransitionFx));
+                if block % 200 == 15 {
+                    handle.send(Command::Mixer(MixerCommand::CycleTransitionFx));
+                }
             }
             _ => {}
         }
