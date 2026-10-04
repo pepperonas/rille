@@ -270,6 +270,9 @@ impl Deck {
             self.tail = None;
             return false;
         };
+        // The length can still change while the track loads (an MP3 estimate is corrected
+        // once decoding finishes).
+        self.transport.frames = track.frames() as u64;
         let playing = self.transport.playing;
         let hit = self.player.render(track, playing, out);
         let length = self.declick_frames as f32;
@@ -1145,6 +1148,38 @@ mod tests {
             })
             .collect();
         Arc::new(TrackAudio::new(1, SR, samples))
+    }
+
+    #[test]
+    fn a_track_plays_while_it_is_still_loading() {
+        let sr = SR as usize;
+        // Expected 10 s (an MP3 estimate), only 1 s decoded so far.
+        let track = Arc::new(TrackAudio::streaming(1, SR, 10 * sr, 11 * sr));
+        let tone: Vec<f32> = (0..sr)
+            .flat_map(|i| [0.5 * (i as f32 * 440.0 * std::f32::consts::TAU / SR as f32).sin(); 2])
+            .collect();
+        track.write(0, &tone);
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, track.clone()).map_err(|_| ()).unwrap();
+        h.send(mix(MixerCommand::Crossfader(0.0)));
+        h.send(deck_a(DeckCommand::Play));
+        let mut out = vec![0.0; 256 * 2];
+        for _ in 0..40 {
+            engine.process(&mut out, 2); // ~0.2 s, inside the published second
+        }
+        assert!(out.iter().any(|v| v.abs() > 0.1), "published audio plays");
+        assert_eq!(h.snapshot().decks[0].frames, 10 * SR as u64);
+        // Decoding ends early: the real length replaces the estimate, and playback stops there.
+        let more: Vec<f32> = tone.iter().map(|v| v * 0.5).collect();
+        track.write(sr, &more);
+        track.finish(2 * sr);
+        let mut out = vec![0.0; 256 * 2];
+        for _ in 0..(3 * sr / 256) {
+            engine.process(&mut out, 2);
+        }
+        let s = h.snapshot().decks[0];
+        assert_eq!(s.frames, 2 * SR as u64);
+        assert!(!s.playing, "stopped at the real end");
     }
 
     #[test]

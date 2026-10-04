@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use rille_core::{Command, DeckCommand, DeckId, TrackAudio};
 use rille_engine::output::{self, OutputError, OutputRequest, OutputStream, StreamFailure};
 use rille_engine::{EngineEvent, EngineHandle, EngineSlot, engine_pair};
+use rille_library::decode::{DecodeStream, open_stream};
 
 use crate::dto::{AudioStatus, Deck, DeckLoadFailed, DeckLoaded, StateFrame};
 
@@ -56,7 +57,8 @@ struct Shared {
     slot: EngineSlot,
     output: Mutex<OutputState>,
     sample_rate: u32,
-    loader_tx: Mutex<Sender<LoadRequest>>,
+    /// One loader thread per deck, so loading one deck never waits for the other.
+    loader_tx: [Mutex<Sender<LoadRequest>>; 2],
     next_track_id: AtomicU64,
     /// Most recent load request per deck; 0 = none (or cancelled by unload).
     latest_request: [AtomicU64; 2],
@@ -113,14 +115,31 @@ pub fn title_from_path(path: &Path) -> String {
         .to_string()
 }
 
-/// Decode, turning a panic inside the decoder into an error so the loader thread survives.
-fn decode_guarded(path: &Path, rate: u32, id: u64) -> Result<TrackAudio, String> {
-    match catch_unwind(AssertUnwindSafe(|| {
-        rille_library::decode_file(path, rate, id)
-    })) {
-        Ok(Ok(track)) => Ok(track),
+const DECODER_PANIC: &str = "Der Decoder ist an dieser Datei gescheitert";
+
+/// Open for streaming decode, turning a panic inside the decoder into an error so the loader
+/// thread survives.
+fn open_guarded(path: &Path, rate: u32, id: u64) -> Result<DecodeStream, String> {
+    match catch_unwind(AssertUnwindSafe(|| open_stream(path, rate, id))) {
+        Ok(Ok(stream)) => Ok(stream),
         Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Err("Der Decoder ist an dieser Datei gescheitert".to_string()),
+        Err(_) => Err(DECODER_PANIC.to_string()),
+    }
+}
+
+/// Fill the track while it plays. Whatever happens, the track ends up complete (with what
+/// could be decoded), so the deck never waits for audio that will not come.
+fn run_guarded(
+    stream: DecodeStream,
+    track: &TrackAudio,
+    keep_going: impl FnMut() -> bool,
+) -> Result<(), String> {
+    match catch_unwind(AssertUnwindSafe(|| stream.run(keep_going))) {
+        Ok(result) => result.map_err(|e| e.to_string()),
+        Err(_) => {
+            track.finish(track.ready_frames());
+            Err(DECODER_PANIC.to_string())
+        }
     }
 }
 
@@ -128,7 +147,8 @@ impl AudioService {
     pub fn start(notify: Notify) -> AudioService {
         let sample_rate = pick_engine_rate(&output::device_rates(None));
         let (engine, handle) = engine_pair(sample_rate, MAX_BLOCK);
-        let (loader_tx, loader_rx) = mpsc::channel();
+        let (tx_a, rx_a) = mpsc::channel();
+        let (tx_b, rx_b) = mpsc::channel();
         let service = AudioService {
             shared: Arc::new(Shared {
                 handle: Mutex::new(handle),
@@ -143,14 +163,15 @@ impl AudioService {
                     error: None,
                 }),
                 sample_rate,
-                loader_tx: Mutex::new(loader_tx),
+                loader_tx: [Mutex::new(tx_a), Mutex::new(tx_b)],
                 next_track_id: AtomicU64::new(1),
                 latest_request: [AtomicU64::new(0), AtomicU64::new(0)],
                 recovering: AtomicBool::new(false),
                 notify,
             }),
         };
-        service.spawn_loader(loader_rx);
+        service.spawn_loader(DeckId::A, rx_a);
+        service.spawn_loader(DeckId::B, rx_b);
         service.spawn_bridge();
         let request = lock(&service.shared.output).request.clone();
         if let Err(e) = service.open(request) {
@@ -181,7 +202,7 @@ impl AudioService {
     pub fn load_file(&self, deck: DeckId, path: PathBuf) -> Result<u64, String> {
         let id = self.shared.next_track_id.fetch_add(1, Ordering::Relaxed);
         self.shared.latest_request[deck.index()].store(id, Ordering::Release);
-        lock(&self.shared.loader_tx)
+        lock(&self.shared.loader_tx[deck.index()])
             .send(LoadRequest { deck, path, id })
             .map_err(|_| "Der Ladevorgang ist nicht verfügbar".to_string())?;
         Ok(id)
@@ -251,9 +272,10 @@ impl AudioService {
         Ok(status)
     }
 
-    fn spawn_loader(&self, rx: Receiver<LoadRequest>) {
+    fn spawn_loader(&self, deck_id: DeckId, rx: Receiver<LoadRequest>) {
         let shared = self.shared.clone();
-        let spawned = thread::Builder::new().name("rille-loader".into()).spawn(move || {
+        let name = format!("rille-loader-{}", deck_id.index() + 1);
+        let spawned = thread::Builder::new().name(name).spawn(move || {
             for request in rx {
                 let deck = Deck::from(request.deck);
                 let title = title_from_path(&request.path);
@@ -272,8 +294,10 @@ impl AudioService {
                         message,
                     }))
                 };
-                let track = match decode_guarded(&request.path, shared.sample_rate, request.id) {
-                    Ok(track) => track,
+                // Opening only reads the header; the track is playable right away and fills
+                // while it plays.
+                let stream = match open_guarded(&request.path, shared.sample_rate, request.id) {
+                    Ok(stream) => stream,
                     Err(message) => {
                         tracing::warn!(path = %request.path.display(), %message, "decode failed");
                         fail(message);
@@ -281,34 +305,33 @@ impl AudioService {
                     }
                 };
                 if !is_current() {
-                    continue; // a newer request or an unload arrived while decoding
+                    continue;
                 }
+                let track = stream.track();
                 let duration_secs = track.duration_secs();
-                let mut track = Arc::new(track);
-                let mut delivered = false;
+                let mut pending = Some(track.clone());
                 for _ in 0..100 {
+                    let Some(t) = pending.take() else { break };
                     // Lock only for the push itself; never sleep while holding it.
-                    let pushed = lock(&shared.handle).load(request.deck, track);
-                    match pushed {
-                        Ok(()) => {
-                            delivered = true;
-                            break;
-                        }
-                        Err(back) => {
-                            track = back;
-                            thread::sleep(Duration::from_millis(5));
-                        }
+                    let pushed = lock(&shared.handle).load(request.deck, t);
+                    if let Err(back) = pushed {
+                        pending = Some(back);
+                        thread::sleep(Duration::from_millis(5));
                     }
                 }
-                if delivered {
-                    (shared.notify)(UiEvent::DeckLoaded(DeckLoaded {
-                        deck,
-                        track_id: request.id,
-                        title,
-                        duration_secs,
-                    }));
-                } else {
+                if pending.is_some() {
                     fail("Die Audio-Engine nimmt gerade keine Tracks an (keine Ausgabe aktiv?)".into());
+                    continue;
+                }
+                (shared.notify)(UiEvent::DeckLoaded(DeckLoaded {
+                    deck,
+                    track_id: request.id,
+                    title,
+                    duration_secs,
+                }));
+                // A newer load or an unload on this deck stops the decode; what is decoded stays.
+                if let Err(message) = run_guarded(stream, &track, is_current) {
+                    tracing::warn!(path = %request.path.display(), %message, "decode stopped early");
                 }
             }
         });
