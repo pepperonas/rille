@@ -141,6 +141,17 @@ pub fn engine_pair(sample_rate: u32, max_block: usize) -> (Engine, EngineHandle)
     (Engine::new(sample_rate, max_block, io), handle)
 }
 
+/// Length of the declick ramps: stopping, starting and jumping fade over this time instead of
+/// cutting the waveform (a hard cut is an audible click).
+pub const DECLICK_MS: f32 = 4.0;
+
+/// The old playback position, still sounding while it fades out after a stop or jump.
+#[derive(Debug, Clone, Copy)]
+struct Tail {
+    position: u64,
+    remaining: u32,
+}
+
 struct Deck {
     track: Option<Arc<TrackAudio>>,
     transport: Transport,
@@ -148,6 +159,10 @@ struct Deck {
     buffer: Vec<f32>,
     gain: Smoother,
     meter: PeakMeter,
+    declick_frames: u32,
+    tail: Option<Tail>,
+    /// Frames left of the fade-in after a start or jump.
+    fade_in: u32,
 }
 
 impl Deck {
@@ -158,26 +173,69 @@ impl Deck {
             buffer: vec![0.0; max_block * 2],
             gain: Smoother::new(sample_rate, LEVEL_SMOOTHING_MS, 0.0),
             meter: PeakMeter::new(sample_rate),
+            declick_frames: ((DECLICK_MS / 1000.0) * sample_rate as f32).max(1.0) as u32,
+            tail: None,
+            fade_in: 0,
+        }
+    }
+
+    /// Compare transport state before and after a command and arm the declick ramps for any
+    /// discontinuity: a stop or jump keeps the old position sounding while it fades out, a start
+    /// or jump fades the new position in. A jump therefore becomes a short crossfade.
+    fn declick(&mut self, before: Transport) {
+        let after = self.transport;
+        let jumped = after.position != before.position;
+        if before.playing && (!after.playing || jumped) {
+            self.tail = Some(Tail {
+                position: before.position,
+                remaining: self.declick_frames,
+            });
+        }
+        if after.playing && (!before.playing || jumped) {
+            self.fade_in = self.declick_frames;
         }
     }
 
     /// Render `frames` frames into `self.buffer`. Returns `true` when the track ended.
     fn render(&mut self, frames: usize) -> bool {
         let out = &mut self.buffer[..frames * 2];
-        match &self.track {
-            Some(track) if self.transport.playing => {
-                let start = self.transport.position as usize;
-                for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-                    let [l, r] = track.frame(start + i);
-                    frame[0] = l;
-                    frame[1] = r;
+        let Some(track) = &self.track else {
+            out.fill(0.0);
+            self.tail = None;
+            return false;
+        };
+        let length = self.declick_frames as f32;
+        let playing = self.transport.playing;
+        let start = self.transport.position as usize;
+        for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+            let mut sample = [0.0f32; 2];
+            if playing {
+                let [l, r] = track.frame(start + i);
+                let gain = if self.fade_in > 0 {
+                    self.fade_in -= 1;
+                    1.0 - self.fade_in as f32 / length
+                } else {
+                    1.0
+                };
+                sample = [l * gain, r * gain];
+            }
+            if let Some(tail) = &mut self.tail {
+                let gain = tail.remaining as f32 / length;
+                let [l, r] = track.frame(tail.position as usize);
+                sample[0] += l * gain;
+                sample[1] += r * gain;
+                tail.position += 1;
+                tail.remaining -= 1;
+                if tail.remaining == 0 {
+                    self.tail = None;
                 }
-                self.transport.advance(frames as u64)
             }
-            _ => {
-                out.fill(0.0);
-                false
-            }
+            *frame = sample;
+        }
+        if playing {
+            self.transport.advance(frames as u64)
+        } else {
+            false
         }
     }
 }
@@ -378,7 +436,9 @@ impl Engine {
             self.release(old);
             return;
         }
-        let t = &mut self.decks[id.index()].transport;
+        let deck = &mut self.decks[id.index()];
+        let before = deck.transport;
+        let t = &mut deck.transport;
         match cmd {
             DeckCommand::PlayPause => t.play_pause(),
             DeckCommand::Play => t.play(),
@@ -389,6 +449,7 @@ impl Engine {
             DeckCommand::Seek { frame } => t.seek(frame),
             DeckCommand::Unload => {}
         }
+        deck.declick(before);
     }
 
     fn apply_mixer(&mut self, cmd: MixerCommand) {
@@ -627,6 +688,94 @@ mod tests {
         let out = settle(&mut engine);
         assert!(out.iter().all(|v| v.is_finite()));
         assert_eq!(h.snapshot().master_gain, 0.0);
+    }
+
+    /// Largest jump between consecutive output samples (left channel) over `blocks` blocks.
+    fn max_step(engine: &mut Engine, blocks: usize, prev: &mut f32) -> f32 {
+        let mut out = vec![0.0; 64 * 2];
+        let mut worst = 0.0f32;
+        for _ in 0..blocks {
+            engine.process(&mut out, 2);
+            for frame in out.as_chunks::<2>().0 {
+                worst = worst.max((frame[0] - *prev).abs());
+                *prev = frame[0];
+            }
+        }
+        worst
+    }
+
+    #[test]
+    fn pause_fades_out_instead_of_clicking() {
+        let (mut engine, mut h) = engine_pair(SR, 64);
+        h.load(DeckId::A, dc_track(1, SR as usize * 10, 1.0))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(mix(MixerCommand::Crossfader(0.0)));
+        h.send(deck_a(DeckCommand::Play));
+        let mut prev = 0.0;
+        max_step(&mut engine, 50, &mut prev); // fade in, settle
+        h.send(deck_a(DeckCommand::Pause));
+        let step = max_step(&mut engine, 20, &mut prev);
+        assert!(step < 0.01, "step {step}");
+        assert_eq!(prev, 0.0, "silent afterwards");
+    }
+
+    #[test]
+    fn play_fades_in() {
+        let (mut engine, mut h) = engine_pair(SR, 64);
+        h.load(DeckId::A, dc_track(1, SR as usize * 10, 1.0))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(mix(MixerCommand::Crossfader(0.0)));
+        let mut prev = 0.0;
+        max_step(&mut engine, 10, &mut prev);
+        h.send(deck_a(DeckCommand::Play));
+        assert!(max_step(&mut engine, 20, &mut prev) < 0.01);
+    }
+
+    #[test]
+    fn cue_jump_while_playing_crossfades() {
+        // First half +1, second half -1: a hard jump would step by 2.
+        let half = SR as usize;
+        let mut samples = vec![1.0f32; half * 2];
+        samples.extend(vec![-1.0f32; half * 2]);
+        let (mut engine, mut h) = engine_pair(SR, 64);
+        h.load(DeckId::A, Arc::new(TrackAudio::new(1, SR, samples)))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(mix(MixerCommand::Crossfader(0.0)));
+        h.send(deck_a(DeckCommand::Seek {
+            frame: half as u64 + 1000,
+        }));
+        h.send(deck_a(DeckCommand::CuePress)); // set cue in the -1 region
+        h.send(deck_a(DeckCommand::Seek { frame: 0 }));
+        h.send(deck_a(DeckCommand::Play));
+        let mut prev = 0.0;
+        max_step(&mut engine, 50, &mut prev);
+        h.send(deck_a(DeckCommand::CuePress)); // playing: jump to cue (-1) and pause
+        let step = max_step(&mut engine, 20, &mut prev);
+        assert!(step < 0.02, "step {step}");
+    }
+
+    #[test]
+    fn seek_while_playing_crossfades() {
+        let half = SR as usize;
+        let mut samples = vec![1.0f32; half * 2];
+        samples.extend(vec![-1.0f32; half * 2]);
+        let (mut engine, mut h) = engine_pair(SR, 64);
+        h.load(DeckId::A, Arc::new(TrackAudio::new(1, SR, samples)))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(mix(MixerCommand::Crossfader(0.0)));
+        h.send(deck_a(DeckCommand::Play));
+        let mut prev = 0.0;
+        max_step(&mut engine, 50, &mut prev);
+        h.send(deck_a(DeckCommand::Seek {
+            frame: half as u64 + 10,
+        }));
+        let step = max_step(&mut engine, 20, &mut prev);
+        assert!(step < 0.02, "step {step}");
+        assert!(prev < -0.99, "now playing the second half");
     }
 
     #[test]

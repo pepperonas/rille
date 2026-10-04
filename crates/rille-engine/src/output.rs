@@ -1,7 +1,7 @@
 //! CoreAudio output via cpal: device listing, stream creation, latency and xrun detection.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::time::Duration;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -40,20 +40,56 @@ pub struct StreamInfo {
     pub buffer_frames: Option<u32>,
 }
 
-/// Values the audio callback publishes for the UI.
+/// Values the audio callback and the error callback publish for the control side. Everything
+/// is atomic: cpal may call the error callback on the render thread itself.
 #[derive(Debug, Default)]
 pub struct StreamStats {
     /// Time from callback to the samples reaching the DAC, as reported by CoreAudio.
     pub device_latency_us: AtomicU32,
     /// Frames delivered in the most recent callback.
     pub last_callback_frames: AtomicU32,
+    /// Overloads CoreAudio reported for this stream.
+    pub device_xruns: AtomicU32,
+    failure: AtomicU8,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+const NO_FAILURE: u8 = 0;
+const FAILURE_GONE: u8 = 1;
+const FAILURE_OTHER: u8 = 2;
+
+impl StreamStats {
+    /// First failure this stream reported, if any. Later failures do not overwrite it.
+    pub fn failure(&self) -> Option<StreamFailure> {
+        match self.failure.load(Ordering::Acquire) {
+            FAILURE_GONE => Some(StreamFailure::DeviceGone),
+            FAILURE_OTHER => Some(StreamFailure::Other),
+            _ => None,
+        }
+    }
+
+    /// Record an error from cpal. Real-time safe: atomics only, no allocation, no lock.
+    pub fn record_error(&self, kind: ErrorKind) {
+        let code = match kind {
+            // Overloads are not fatal; they are counted, the stream keeps running.
+            ErrorKind::Xrun => {
+                self.device_xruns.fetch_add(1, Ordering::Relaxed);
+                return;
+            }
+            ErrorKind::DeviceNotAvailable => FAILURE_GONE,
+            _ => FAILURE_OTHER,
+        };
+        let _ =
+            self.failure
+                .compare_exchange(NO_FAILURE, code, Ordering::AcqRel, Ordering::Relaxed);
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StreamFailure {
     /// The device disappeared (unplugged, switched off).
     DeviceGone,
-    Other(String),
+    /// The stream broke for another reason (format change, driver reset).
+    Other,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -174,13 +210,9 @@ fn find_device(host: &cpal::Host, id: Option<&str>) -> Result<cpal::Device, Outp
     }
 }
 
-/// Open an output stream that renders `slot`'s engine. `on_failure` is called (from a CoreAudio
-/// thread, not the render thread) when the stream breaks.
-pub fn open(
-    slot: &EngineSlot,
-    request: &OutputRequest,
-    on_failure: impl FnMut(StreamFailure) + Send + 'static,
-) -> Result<OutputStream, OutputError> {
+/// Open an output stream that renders `slot`'s engine. Failures are reported through
+/// [`StreamStats::failure`], which the control side polls.
+pub fn open(slot: &EngineSlot, request: &OutputRequest) -> Result<OutputStream, OutputError> {
     let host = cpal::default_host();
     let device = find_device(&host, request.device_id.as_deref())?;
     let ranges: Vec<RateRange> = device
@@ -197,7 +229,7 @@ pub fn open(
 
     let stats = Arc::new(StreamStats::default());
 
-    let build = |buffer_size: BufferSize, on_failure: Box<dyn FnMut(StreamFailure) + Send>| {
+    let build = |buffer_size: BufferSize| {
         let config = StreamConfig {
             channels,
             sample_rate: request.sample_rate,
@@ -208,7 +240,7 @@ pub fn open(
         let channel_count = usize::from(channels);
         let sample_rate = request.sample_rate;
         let mut last_callback: Option<StreamInstant> = None;
-        let mut on_failure = on_failure;
+        let error_stats = stats.clone();
         device.build_output_stream::<f32, _, _>(
             config,
             move |data: &mut [f32], info: &OutputCallbackInfo| {
@@ -242,35 +274,17 @@ pub fn open(
                     data.fill(0.0);
                 }
             },
-            move |err: cpal::Error| {
-                on_failure(match err.kind() {
-                    ErrorKind::DeviceNotAvailable => StreamFailure::DeviceGone,
-                    _ => StreamFailure::Other(err.to_string()),
-                })
-            },
+            // May run on the render thread: atomics only.
+            move |err: cpal::Error| error_stats.record_error(err.kind()),
             None,
         )
     };
 
-    // The failure callback is moved into whichever stream build succeeds; share it so a failed
-    // fixed-size attempt does not consume it.
-    let shared = Arc::new(std::sync::Mutex::new(on_failure));
-    let make_cb = || {
-        let shared = shared.clone();
-        Box::new(move |f: StreamFailure| {
-            // Runs on a CoreAudio notification thread, never on the render thread.
-            if let Ok(mut cb) = shared.lock() {
-                cb(f);
-            }
-        }) as Box<dyn FnMut(StreamFailure) + Send>
-    };
-
     let wanted = request.buffer_frames.clamp(16, 4096);
-    let (stream, buffer_frames) = match build(BufferSize::Fixed(wanted), make_cb()) {
+    let (stream, buffer_frames) = match build(BufferSize::Fixed(wanted)) {
         Ok(stream) => (stream, Some(wanted)),
         Err(_) => (
-            build(BufferSize::Default, make_cb())
-                .map_err(|e| OutputError::Backend(e.to_string()))?,
+            build(BufferSize::Default).map_err(|e| OutputError::Backend(e.to_string()))?,
             None,
         ),
     };
@@ -326,6 +340,23 @@ mod tests {
             vec![44_100, 48_000]
         );
         assert!(supported_rates(&[(1, 44_100, 48_000)]).is_empty());
+    }
+
+    #[test]
+    fn overloads_are_counted_not_fatal() {
+        let stats = StreamStats::default();
+        stats.record_error(ErrorKind::Xrun);
+        stats.record_error(ErrorKind::Xrun);
+        assert_eq!(stats.device_xruns.load(Ordering::Relaxed), 2);
+        assert_eq!(stats.failure(), None);
+    }
+
+    #[test]
+    fn first_failure_wins() {
+        let stats = StreamStats::default();
+        stats.record_error(ErrorKind::DeviceNotAvailable);
+        stats.record_error(ErrorKind::BackendError);
+        assert_eq!(stats.failure(), Some(StreamFailure::DeviceGone));
     }
 
     #[test]

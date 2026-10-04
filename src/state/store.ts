@@ -34,10 +34,16 @@ export function loadAccepted(s: AppState, deck: Deck, requestId: number): AppSta
   return { ...s, decks: { ...s.decks, [deck]: { ...d, requestId } } };
 }
 
-/** A finished load only wins if it is the one most recently requested for that deck. */
+/** Does a result for `trackId` belong to the load the deck is currently waiting for? */
+function awaited(d: DeckInfo, trackId: number | null): boolean {
+  return d.status === 'loading' && (d.requestId === null || trackId === null || d.requestId === trackId);
+}
+
+/** A finished load only wins if it is the one most recently requested for that deck and the
+ *  deck was not ejected in the meantime. */
 export function loaded(s: AppState, e: DeckLoaded): AppState {
   const d = s.decks[e.deck];
-  if (d.status === 'loading' && d.requestId !== null && d.requestId !== e.trackId) return s;
+  if (!awaited(d, e.trackId)) return s;
   const info: DeckInfo = {
     status: 'ready',
     trackId: e.trackId,
@@ -49,7 +55,7 @@ export function loaded(s: AppState, e: DeckLoaded): AppState {
 
 export function loadFailed(s: AppState, e: DeckLoadFailed): AppState {
   const d = s.decks[e.deck];
-  if (d.status !== 'loading') return s;
+  if (!awaited(d, e.trackId)) return s;
   const info: DeckInfo = { status: 'error', title: e.title, message: e.message };
   return { ...s, decks: { ...s.decks, [e.deck]: info } };
 }

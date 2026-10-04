@@ -50,6 +50,7 @@ export function createMockBackend(): Backend {
     requestedBuffer: 256,
     bufferFrames: 256,
     latencyMs: 5.3,
+    deviceXruns: 0,
     error: null,
   };
 

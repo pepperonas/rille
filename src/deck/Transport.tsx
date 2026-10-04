@@ -1,5 +1,6 @@
 import { motion, useReducedMotion } from 'motion/react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import { backend } from '../ipc';
 import type { Deck } from '../ipc/types';
 import { shapes, sizes, springs } from '../design/tokens';
@@ -23,6 +24,26 @@ export function Transport({ deck }: { deck: Deck }) {
 
   const transition = reduce ? { duration: 0 } : springs.spatialFast;
 
+  // What the current Cue press started, decided at press time: a later Shift change must not
+  // turn the release into something else (a preview would keep playing).
+  const cueMode = useRef<'cue' | 'start' | null>(null);
+  const cuePress = (shift: boolean) => {
+    if (cueMode.current) return;
+    cueMode.current = shift ? 'start' : 'cue';
+    setCueHeld(true);
+    backend.deck(deck, shift ? { type: 'jumpToStart' } : { type: 'cuePress' });
+  };
+  const cueRelease = () => {
+    if (cueMode.current === 'cue') backend.deck(deck, { type: 'cueRelease' });
+    cueMode.current = null;
+    setCueHeld(false);
+  };
+  const togglePlay = () => {
+    setOptimisticPlay(!showPlaying);
+    backend.deck(deck, { type: 'playPause' });
+  };
+  const isActivation = (e: KeyboardEvent) => e.key === 'Enter' || e.key === ' ';
+
   return (
     <div className={styles.transport}>
       <motion.button
@@ -34,17 +55,18 @@ export function Transport({ deck }: { deck: Deck }) {
         transition={transition}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
-          setCueHeld(true);
-          backend.deck(deck, e.shiftKey ? { type: 'jumpToStart' } : { type: 'cuePress' });
+          cuePress(e.shiftKey);
         }}
-        onPointerUp={(e) => {
-          setCueHeld(false);
-          if (!e.shiftKey) backend.deck(deck, { type: 'cueRelease' });
+        onPointerUp={cueRelease}
+        onPointerCancel={cueRelease}
+        onLostPointerCapture={cueRelease}
+        onKeyDown={(e) => {
+          if (!isActivation(e)) return;
+          e.preventDefault();
+          if (!e.repeat) cuePress(e.shiftKey);
         }}
-        onPointerCancel={() => {
-          setCueHeld(false);
-          backend.deck(deck, { type: 'cueRelease' });
-        }}
+        onKeyUp={(e) => isActivation(e) && cueRelease()}
+        onBlur={cueRelease}
       >
         CUE
       </motion.button>
@@ -56,9 +78,11 @@ export function Transport({ deck }: { deck: Deck }) {
         aria-pressed={showPlaying}
         animate={{ borderRadius: showPlaying ? shapes.lgInc : sizes.playButton / 2 }}
         transition={transition}
-        onPointerDown={() => {
-          setOptimisticPlay(!showPlaying);
-          backend.deck(deck, { type: 'playPause' });
+        onPointerDown={togglePlay}
+        onKeyDown={(e) => {
+          if (!isActivation(e)) return;
+          e.preventDefault();
+          if (!e.repeat) togglePlay();
         }}
         onAnimationComplete={() => setOptimisticPlay(null)}
       >

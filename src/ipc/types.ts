@@ -43,6 +43,7 @@ export interface AudioStatus {
   requestedBuffer: number;
   bufferFrames: number | null;
   latencyMs: number;
+  deviceXruns: number;
   error: string | null;
 }
 
@@ -55,6 +56,7 @@ export interface DeckLoaded {
 
 export interface DeckLoadFailed {
   deck: Deck;
+  trackId: number | null;
   title: string;
   message: string;
 }

@@ -1,16 +1,18 @@
 //! Owns the engine handle, the output stream, the loader thread and the 60 Hz bridge.
 //!
-//! Locks in this file are taken only on control threads (Tauri commands, loader, bridge);
-//! the audio thread talks to the engine exclusively through lock-free queues.
+//! Locks in this file are taken only on control threads (Tauri commands, loader, bridge,
+//! recovery); the audio thread talks to the engine exclusively through lock-free queues and
+//! reports stream failures through atomics.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rille_core::{Command, DeckId};
+use rille_core::{Command, DeckCommand, DeckId, TrackAudio};
 use rille_engine::output::{self, OutputError, OutputRequest, OutputStream, StreamFailure};
 use rille_engine::{EngineEvent, EngineHandle, EngineSlot, engine_pair};
 
@@ -21,6 +23,9 @@ const MAX_BLOCK: usize = 1024;
 /// Bridge period: 60 Hz.
 const FRAME_INTERVAL: Duration = Duration::from_micros(16_667);
 const PREFERRED_RATES: [u32; 2] = [48_000, 44_100];
+/// Wait before reopening after a failure: CoreAudio reports a vanished device a moment before
+/// the system default switches.
+const RECOVERY_DELAY: Duration = Duration::from_millis(250);
 
 /// Notifications for the frontend. Mapped to Tauri events in `lib.rs`.
 #[derive(Debug, Clone)]
@@ -40,10 +45,6 @@ struct LoadRequest {
     id: u64,
 }
 
-enum Control {
-    StreamFailed(StreamFailure),
-}
-
 struct OutputState {
     stream: Option<OutputStream>,
     request: OutputRequest,
@@ -56,8 +57,10 @@ struct Shared {
     output: Mutex<OutputState>,
     sample_rate: u32,
     loader_tx: Mutex<Sender<LoadRequest>>,
-    control_tx: Mutex<Sender<Control>>,
     next_track_id: AtomicU64,
+    /// Most recent load request per deck; 0 = none (or cancelled by unload).
+    latest_request: [AtomicU64; 2],
+    recovering: AtomicBool,
     notify: Notify,
 }
 
@@ -80,23 +83,25 @@ pub fn pick_engine_rate(supported: &[u32]) -> u32 {
         .unwrap_or(PREFERRED_RATES[0])
 }
 
-/// After a stream failure: fall back to the system default device, keep the buffer size.
-pub fn fallback_request(current: &OutputRequest) -> OutputRequest {
-    OutputRequest {
-        device_id: None,
-        ..current.clone()
+/// What to open after a failure: a vanished device falls back to the system default; any other
+/// failure retries the same device.
+pub fn recovery_request(current: &OutputRequest, failure: StreamFailure) -> OutputRequest {
+    match failure {
+        StreamFailure::DeviceGone => OutputRequest {
+            device_id: None,
+            ..current.clone()
+        },
+        StreamFailure::Other => current.clone(),
     }
 }
 
-pub fn failure_message(failure: &StreamFailure, device: Option<&str>) -> String {
+pub fn failure_message(failure: StreamFailure, device: Option<&str>) -> String {
     let name = device.unwrap_or("Das Audio-Gerät");
     match failure {
         StreamFailure::DeviceGone => {
             format!("{name} wurde getrennt. Wechsel auf das Standardgerät.")
         }
-        StreamFailure::Other(e) => {
-            format!("Audio-Ausgabe unterbrochen ({e}). Neustart der Ausgabe.")
-        }
+        StreamFailure::Other => format!("Audio-Ausgabe von {name} unterbrochen, neu gestartet."),
     }
 }
 
@@ -108,12 +113,22 @@ pub fn title_from_path(path: &Path) -> String {
         .to_string()
 }
 
+/// Decode, turning a panic inside the decoder into an error so the loader thread survives.
+fn decode_guarded(path: &Path, rate: u32, id: u64) -> Result<TrackAudio, String> {
+    match catch_unwind(AssertUnwindSafe(|| {
+        rille_library::decode_file(path, rate, id)
+    })) {
+        Ok(Ok(track)) => Ok(track),
+        Ok(Err(e)) => Err(e.to_string()),
+        Err(_) => Err("Der Decoder ist an dieser Datei gescheitert".to_string()),
+    }
+}
+
 impl AudioService {
     pub fn start(notify: Notify) -> AudioService {
         let sample_rate = pick_engine_rate(&output::device_rates(None));
         let (engine, handle) = engine_pair(sample_rate, MAX_BLOCK);
         let (loader_tx, loader_rx) = mpsc::channel();
-        let (control_tx, control_rx) = mpsc::channel();
         let service = AudioService {
             shared: Arc::new(Shared {
                 handle: Mutex::new(handle),
@@ -129,13 +144,14 @@ impl AudioService {
                 }),
                 sample_rate,
                 loader_tx: Mutex::new(loader_tx),
-                control_tx: Mutex::new(control_tx),
                 next_track_id: AtomicU64::new(1),
+                latest_request: [AtomicU64::new(0), AtomicU64::new(0)],
+                recovering: AtomicBool::new(false),
                 notify,
             }),
         };
         service.spawn_loader(loader_rx);
-        service.spawn_bridge(control_rx);
+        service.spawn_bridge();
         let request = lock(&service.shared.output).request.clone();
         if let Err(e) = service.open(request) {
             tracing::warn!(%e, "no audio output at start");
@@ -154,10 +170,17 @@ impl AudioService {
     /// Queue a file for decoding. Returns the track id the deck will report once loaded.
     pub fn load_file(&self, deck: DeckId, path: PathBuf) -> Result<u64, String> {
         let id = self.shared.next_track_id.fetch_add(1, Ordering::Relaxed);
+        self.shared.latest_request[deck.index()].store(id, Ordering::Release);
         lock(&self.shared.loader_tx)
             .send(LoadRequest { deck, path, id })
             .map_err(|_| "Der Ladevorgang ist nicht verfügbar".to_string())?;
         Ok(id)
+    }
+
+    /// Empty the deck and cancel a load that is still decoding.
+    pub fn unload(&self, deck: DeckId) {
+        self.shared.latest_request[deck.index()].store(0, Ordering::Release);
+        self.send(Command::Deck(deck, DeckCommand::Unload));
     }
 
     pub fn status(&self) -> AudioStatus {
@@ -186,23 +209,23 @@ impl AudioService {
             requested_buffer: out.request.buffer_frames,
             buffer_frames: info.buffer_frames,
             latency_ms: buffer_ms + device_us as f32 / 1000.0,
+            device_xruns: stream.stats.device_xruns.load(Ordering::Relaxed),
             error: out.error.clone(),
         }
     }
 
-    /// (Re)open the output. The previous stream stops first, so only one stream ever renders.
+    /// Open a new output. The new stream is built first; only when that worked does it replace
+    /// the old one, so a failed device switch keeps the music playing.
     pub fn open(&self, request: OutputRequest) -> Result<AudioStatus, OutputError> {
+        let result = output::open(&self.shared.slot, &request);
         {
             let mut out = lock(&self.shared.output);
-            out.stream = None;
-            out.request = request.clone();
-            let control_tx = lock(&self.shared.control_tx).clone();
-            match output::open(&self.shared.slot, &request, move |failure| {
-                let _ = control_tx.send(Control::StreamFailed(failure));
-            }) {
+            match result {
                 Ok(stream) => {
                     tracing::info!(info = ?stream.info, "audio output open");
+                    // Dropping the old stream stops it; the slot keeps the engine meanwhile.
                     out.stream = Some(stream);
+                    out.request = request;
                     out.error = None;
                 }
                 Err(e) => {
@@ -220,57 +243,71 @@ impl AudioService {
 
     fn spawn_loader(&self, rx: Receiver<LoadRequest>) {
         let shared = self.shared.clone();
-        let spawned = thread::Builder::new()
-            .name("rille-loader".into())
-            .spawn(move || {
-                for request in rx {
-                    let title = title_from_path(&request.path);
-                    let deck = Deck::from(request.deck);
-                    match rille_library::decode_file(&request.path, shared.sample_rate, request.id)
-                    {
-                        Ok(track) => {
-                            let duration_secs = track.duration_secs();
-                            let mut track = Arc::new(track);
-                            // The track queue holds several loads; retry briefly if it is full.
-                            let mut attempts = 0;
-                            loop {
-                                match lock(&shared.handle).load(request.deck, track) {
-                                    Ok(()) => break,
-                                    Err(back) if attempts < 100 => {
-                                        track = back;
-                                        attempts += 1;
-                                        thread::sleep(Duration::from_millis(5));
-                                    }
-                                    Err(_) => {
-                                        tracing::error!("track queue stuck, dropping load");
-                                        break;
-                                    }
-                                }
-                            }
-                            (shared.notify)(UiEvent::DeckLoaded(DeckLoaded {
-                                deck,
-                                track_id: request.id,
-                                title,
-                                duration_secs,
-                            }));
+        let spawned = thread::Builder::new().name("rille-loader".into()).spawn(move || {
+            for request in rx {
+                let deck = Deck::from(request.deck);
+                let title = title_from_path(&request.path);
+                let is_current = || {
+                    shared.latest_request[request.deck.index()].load(Ordering::Acquire)
+                        == request.id
+                };
+                if !is_current() {
+                    continue; // superseded or unloaded before decoding started
+                }
+                let fail = |message: String| {
+                    (shared.notify)(UiEvent::DeckLoadFailed(DeckLoadFailed {
+                        deck,
+                        track_id: request.id,
+                        title: title.clone(),
+                        message,
+                    }))
+                };
+                let track = match decode_guarded(&request.path, shared.sample_rate, request.id) {
+                    Ok(track) => track,
+                    Err(message) => {
+                        tracing::warn!(path = %request.path.display(), %message, "decode failed");
+                        fail(message);
+                        continue;
+                    }
+                };
+                if !is_current() {
+                    continue; // a newer request or an unload arrived while decoding
+                }
+                let duration_secs = track.duration_secs();
+                let mut track = Arc::new(track);
+                let mut delivered = false;
+                for _ in 0..100 {
+                    // Lock only for the push itself; never sleep while holding it.
+                    let pushed = lock(&shared.handle).load(request.deck, track);
+                    match pushed {
+                        Ok(()) => {
+                            delivered = true;
+                            break;
                         }
-                        Err(e) => {
-                            tracing::warn!(path = %request.path.display(), %e, "decode failed");
-                            (shared.notify)(UiEvent::DeckLoadFailed(DeckLoadFailed {
-                                deck,
-                                title,
-                                message: e.to_string(),
-                            }));
+                        Err(back) => {
+                            track = back;
+                            thread::sleep(Duration::from_millis(5));
                         }
                     }
                 }
-            });
+                if delivered {
+                    (shared.notify)(UiEvent::DeckLoaded(DeckLoaded {
+                        deck,
+                        track_id: request.id,
+                        title,
+                        duration_secs,
+                    }));
+                } else {
+                    fail("Die Audio-Engine nimmt gerade keine Tracks an (keine Ausgabe aktiv?)".into());
+                }
+            }
+        });
         if let Err(e) = spawned {
             tracing::error!(%e, "could not start loader thread");
         }
     }
 
-    fn spawn_bridge(&self, control_rx: Receiver<Control>) {
+    fn spawn_bridge(&self) {
         let service = self.clone();
         let spawned = thread::Builder::new()
             .name("rille-bridge".into())
@@ -279,53 +316,13 @@ impl AudioService {
                 let mut next = Instant::now();
                 loop {
                     next += FRAME_INTERVAL;
-                    let (snapshot, dropped, events) = {
-                        let mut handle = lock(&service.shared.handle);
-                        let snapshot = handle.snapshot();
-                        handle.collect_garbage();
-                        let mut events = [None; 8];
-                        for slot in &mut events {
-                            *slot = handle.next_event();
-                            if slot.is_none() {
-                                break;
-                            }
-                        }
-                        (snapshot, handle.dropped_commands(), events)
-                    };
-                    for event in events.into_iter().flatten() {
-                        if let EngineEvent::TrackEnded { deck } = event {
-                            (service.shared.notify)(UiEvent::DeckEnded(deck.into()));
-                        }
+                    service.bridge_tick(&mut last_sent);
+                    service.check_stream();
+                    let now = Instant::now();
+                    if now > next + FRAME_INTERVAL * 4 {
+                        next = now; // fell behind (e.g. machine slept): don't burst
                     }
-                    let playing = snapshot.decks.iter().any(|d| d.playing);
-                    let peaks_alive = snapshot.master_peak.iter().any(|p| *p > 0.0);
-                    if last_sent != Some(snapshot)
-                        && (playing || peaks_alive || last_sent.is_none() || {
-                            let prev = last_sent.unwrap_or_default();
-                            prev.decks != snapshot.decks
-                                || prev.channel_fader != snapshot.channel_fader
-                                || prev.crossfader != snapshot.crossfader
-                                || prev.curve != snapshot.curve
-                                || prev.trim != snapshot.trim
-                                || prev.master_gain != snapshot.master_gain
-                                || prev.xruns != snapshot.xruns
-                        })
-                    {
-                        (service.shared.notify)(UiEvent::State(StateFrame::from_snapshot(
-                            &snapshot, dropped,
-                        )));
-                        last_sent = Some(snapshot);
-                    }
-
-                    let timeout = next.saturating_duration_since(Instant::now());
-                    match control_rx.recv_timeout(timeout) {
-                        Ok(Control::StreamFailed(failure)) => service.recover(failure),
-                        Err(RecvTimeoutError::Timeout) => {}
-                        Err(RecvTimeoutError::Disconnected) => {}
-                    }
-                    if Instant::now() > next + FRAME_INTERVAL * 4 {
-                        next = Instant::now(); // fell behind (e.g. machine slept): don't burst
-                    }
+                    thread::sleep(next.saturating_duration_since(Instant::now()));
                 }
             });
         if let Err(e) = spawned {
@@ -333,48 +330,127 @@ impl AudioService {
         }
     }
 
+    fn bridge_tick(&self, last_sent: &mut Option<rille_core::Snapshot>) {
+        let (snapshot, dropped, events) = {
+            let mut handle = lock(&self.shared.handle);
+            let snapshot = handle.snapshot();
+            handle.collect_garbage();
+            let mut events = [None; 8];
+            for slot in &mut events {
+                *slot = handle.next_event();
+                if slot.is_none() {
+                    break;
+                }
+            }
+            (snapshot, handle.dropped_commands(), events)
+        };
+        for event in events.into_iter().flatten() {
+            if let EngineEvent::TrackEnded { deck } = event {
+                (self.shared.notify)(UiEvent::DeckEnded(deck.into()));
+            }
+        }
+        if should_send(last_sent.as_ref(), &snapshot) {
+            (self.shared.notify)(UiEvent::State(StateFrame::from_snapshot(
+                &snapshot, dropped,
+            )));
+            *last_sent = Some(snapshot);
+        }
+    }
+
+    /// Look at the *current* stream only: failures of streams already replaced cannot trigger a
+    /// recovery that would tear down a healthy one.
+    fn check_stream(&self) {
+        let failure = {
+            let out = lock(&self.shared.output);
+            out.stream.as_ref().and_then(|s| s.stats.failure())
+        };
+        let Some(failure) = failure else { return };
+        if self.shared.recovering.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let service = self.clone();
+        let spawned = thread::Builder::new()
+            .name("rille-recover".into())
+            .spawn(move || {
+                service.recover(failure);
+                service.shared.recovering.store(false, Ordering::Release);
+            });
+        if let Err(e) = spawned {
+            tracing::error!(%e, "could not start recovery");
+            self.shared.recovering.store(false, Ordering::Release);
+        }
+    }
+
     fn recover(&self, failure: StreamFailure) {
         let (request, device_name) = {
-            let out = lock(&self.shared.output);
+            let mut out = lock(&self.shared.output);
             let name = out.stream.as_ref().map(|s| s.info.device_name.clone());
-            (fallback_request(&out.request), name)
+            // The broken stream is useless; drop it now so it stops reporting.
+            out.stream = None;
+            (recovery_request(&out.request, failure), name)
         };
-        let message = failure_message(&failure, device_name.as_deref());
+        let message = failure_message(failure, device_name.as_deref());
         tracing::warn!(?failure, "audio stream failed, reopening");
-        // CoreAudio may report a vanished device a moment before the default switches.
-        thread::sleep(Duration::from_millis(250));
+        thread::sleep(RECOVERY_DELAY);
         let result = self.open(request);
-        let mut out = lock(&self.shared.output);
-        out.error = Some(match result {
+        lock(&self.shared.output).error = Some(match result {
             Ok(_) => message,
             Err(e) => format!("{message} {e}"),
         });
-        drop(out);
         (self.shared.notify)(UiEvent::AudioChanged(self.status()));
     }
+}
+
+/// Send a frame when anything visible changed or while audio moves.
+fn should_send(last: Option<&rille_core::Snapshot>, now: &rille_core::Snapshot) -> bool {
+    let Some(prev) = last else { return true };
+    if prev == now {
+        return false;
+    }
+    let moving = now.decks.iter().any(|d| d.playing)
+        || now.master_peak.iter().any(|p| *p > 0.0)
+        || now.decks.iter().any(|d| d.peak.iter().any(|p| *p > 0.0));
+    moving
+        || prev.decks != now.decks
+        || prev.channel_fader != now.channel_fader
+        || prev.trim != now.trim
+        || prev.crossfader != now.crossfader
+        || prev.curve != now.curve
+        || prev.master_gain != now.master_gain
+        || prev.xruns != now.xruns
+        || prev.sample_rate != now.sample_rate
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rille_core::Snapshot;
 
-    #[test]
-    fn fallback_keeps_buffer_and_rate_but_uses_default_device() {
-        let current = OutputRequest {
-            device_id: Some("coreaudio:usb".into()),
+    fn request(device: Option<&str>) -> OutputRequest {
+        OutputRequest {
+            device_id: device.map(str::to_string),
             buffer_frames: 128,
             sample_rate: 48_000,
-        };
-        let next = fallback_request(&current);
-        assert_eq!(next.device_id, None);
-        assert_eq!((next.buffer_frames, next.sample_rate), (128, 48_000));
+        }
+    }
+
+    #[test]
+    fn vanished_device_falls_back_to_default() {
+        let next = recovery_request(&request(Some("coreaudio:usb")), StreamFailure::DeviceGone);
+        assert_eq!(next, request(None));
+    }
+
+    #[test]
+    fn other_failures_retry_the_same_device() {
+        let current = request(Some("coreaudio:usb"));
+        assert_eq!(recovery_request(&current, StreamFailure::Other), current);
     }
 
     #[test]
     fn failure_messages_are_german_and_name_the_device() {
-        let m = failure_message(&StreamFailure::DeviceGone, Some("Interface"));
+        let m = failure_message(StreamFailure::DeviceGone, Some("Interface"));
         assert!(m.contains("Interface") && m.contains("getrennt"));
-        assert!(failure_message(&StreamFailure::Other("x".into()), None).contains("unterbrochen"));
+        assert!(failure_message(StreamFailure::Other, None).contains("unterbrochen"));
     }
 
     #[test]
@@ -391,5 +467,29 @@ mod tests {
             "Artist - Song"
         );
         assert_eq!(title_from_path(Path::new("/")), "Unbenannt");
+    }
+
+    #[test]
+    fn frames_are_sent_on_change_and_while_moving_only() {
+        let idle = Snapshot::default();
+        assert!(should_send(None, &idle), "first frame always");
+        assert!(!should_send(Some(&idle), &idle), "nothing changed");
+        let mut faded = idle;
+        faded.crossfader = 0.3;
+        assert!(should_send(Some(&idle), &faded));
+        let mut clock_only = idle;
+        clock_only.frame_clock = 999;
+        assert!(
+            !should_send(Some(&idle), &clock_only),
+            "the clock alone is not news"
+        );
+        let mut playing = clock_only;
+        playing.decks[0].playing = true;
+        let mut later = playing;
+        later.frame_clock += 256;
+        assert!(
+            should_send(Some(&playing), &later),
+            "playing decks stream continuously"
+        );
     }
 }

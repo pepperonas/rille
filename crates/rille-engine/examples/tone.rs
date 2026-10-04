@@ -37,7 +37,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             buffer_frames: 256,
             sample_rate: rate,
         },
-        |failure| eprintln!("stream failure: {failure:?}"),
     )?;
     println!("{:?}", stream.info);
     handle

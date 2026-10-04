@@ -39,7 +39,12 @@ export async function loadIntoDeck(deck: Deck, path: string): Promise<void> {
     store.update((s) => loadAccepted(s, deck, id));
   } catch (e) {
     store.update((s) =>
-      loadFailed(s, { deck, title, message: e instanceof Error ? e.message : String(e) }),
+      loadFailed(s, {
+        deck,
+        trackId: null,
+        title,
+        message: e instanceof Error ? e.message : String(e),
+      }),
     );
   }
 }

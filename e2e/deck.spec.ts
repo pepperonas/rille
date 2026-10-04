@@ -71,3 +71,29 @@ test('settings show audio device and latency, footer has the year', async ({ pag
   await expect(dialog).toContainText('10.7 ms');
   await expect(dialog).toContainText(`© ${new Date().getFullYear()} Martin Pfeffer | celox.io`);
 });
+
+test('play and cue work from the keyboard', async ({ page }) => {
+  const a = deck(page, 'a');
+  await a.getByRole('button', { name: 'Demo-Track laden' }).click();
+  await a.getByRole('button', { name: 'Play' }).focus();
+  await page.keyboard.press('Space');
+  await expect(a.getByRole('button', { name: 'Pause' })).toBeVisible();
+  await a.getByRole('button', { name: 'Cue' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(a.getByRole('button', { name: 'Play' })).toBeVisible();
+  await expect(a.getByLabel('Gespielt')).toHaveText('0:00.0');
+});
+
+test('holding cue previews and releasing with shift still returns', async ({ page }) => {
+  const a = deck(page, 'a');
+  await a.getByRole('button', { name: 'Demo-Track laden' }).click();
+  const cue = a.getByRole('button', { name: 'Cue' });
+  await cue.hover();
+  await page.mouse.down();
+  await expect(a.getByLabel('Gespielt')).not.toHaveText('0:00.0', { timeout: 2000 });
+  await page.keyboard.down('Shift');
+  await page.mouse.up();
+  await page.keyboard.up('Shift');
+  await expect(a.getByLabel('Gespielt')).toHaveText('0:00.0');
+  await expect(a.getByRole('button', { name: 'Play' })).toBeVisible();
+});

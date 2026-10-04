@@ -201,6 +201,8 @@ pub struct AudioStatus {
     pub buffer_frames: Option<u32>,
     /// Buffer + device latency in milliseconds.
     pub latency_ms: f32,
+    /// Overloads CoreAudio reported for the current stream.
+    pub device_xruns: u32,
     /// Last problem, in German, ready to show.
     pub error: Option<String>,
 }
@@ -218,6 +220,7 @@ pub struct DeckLoaded {
 #[serde(rename_all = "camelCase")]
 pub struct DeckLoadFailed {
     pub deck: Deck,
+    pub track_id: u64,
     pub title: String,
     pub message: String,
 }

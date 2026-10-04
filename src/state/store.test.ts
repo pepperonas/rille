@@ -26,13 +26,28 @@ describe('deck load lifecycle', () => {
 
   it('shows decode errors', () => {
     let s = loadRequested(initialState, 'b', 'Broken');
-    s = loadFailed(s, { deck: 'b', title: 'Broken', message: 'Datei ist beschädigt' });
+    s = loadFailed(s, { deck: 'b', trackId: null, title: 'Broken', message: 'Datei ist beschädigt' });
     expect(s.decks.b).toEqual({ status: 'error', title: 'Broken', message: 'Datei ist beschädigt' });
   });
 
   it('a failure for a deck that is not loading changes nothing', () => {
-    const s = loadFailed(initialState, { deck: 'a', title: 'x', message: 'y' });
+    const s = loadFailed(initialState, { deck: 'a', trackId: 1, title: 'x', message: 'y' });
     expect(s).toBe(initialState);
+  });
+
+  it('a result arriving after eject is ignored', () => {
+    let s = loadRequested(initialState, 'a', 'Track');
+    s = loadAccepted(s, 'a', 3);
+    s = unloaded(s, 'a');
+    s = loaded(s, { deck: 'a', trackId: 3, title: 'Track', durationSecs: 1 });
+    expect(s.decks.a.status).toBe('empty');
+  });
+
+  it('a failure of an older request does not replace a newer load', () => {
+    let s = loadRequested(initialState, 'a', 'New');
+    s = loadAccepted(s, 'a', 9);
+    s = loadFailed(s, { deck: 'a', trackId: 8, title: 'Old', message: 'kaputt' });
+    expect(s.decks.a.status).toBe('loading');
   });
 
   it('unload empties the deck', () => {

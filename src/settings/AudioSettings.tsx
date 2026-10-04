@@ -8,6 +8,7 @@ const BUFFER_SIZES = [64, 128, 256, 512, 1024, 2048] as const;
 
 export function AudioSettings({ open }: { open: boolean }) {
   const status = useAppState((s) => s.audio);
+  const engineXruns = useAppState((s) => s.frame?.xruns ?? 0);
   const [devices, setDevices] = useState<AudioDevice[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +82,10 @@ export function AudioSettings({ open }: { open: boolean }) {
         <div>
           <dt>Abtastrate</dt>
           <dd className="numeric">{status?.sampleRate ? `${status.sampleRate / 1000} kHz` : '–'}</dd>
+        </div>
+        <div>
+          <dt>Aussetzer</dt>
+          <dd className="numeric">{engineXruns + (status?.deviceXruns ?? 0)}</dd>
         </div>
         <div>
           <dt>Puffer aktiv</dt>

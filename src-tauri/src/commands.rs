@@ -60,7 +60,11 @@ pub fn deck_load_file(
 
 #[tauri::command]
 pub fn deck_command(deck: Deck, action: DeckAction, audio: State<'_, AudioService>) {
-    audio.send(Command::Deck(deck.into(), action.into()));
+    match action {
+        // Unloading also cancels a load that is still decoding.
+        DeckAction::Unload => audio.unload(deck.into()),
+        _ => audio.send(Command::Deck(deck.into(), action.into())),
+    }
 }
 
 #[tauri::command]
