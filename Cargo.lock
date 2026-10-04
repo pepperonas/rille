@@ -2678,11 +2678,13 @@ dependencies = [
 name = "rille"
 version = "0.1.0"
 dependencies = [
+ "assert_no_alloc",
  "rille-core",
  "rille-engine",
  "rille-library",
  "rille-midi",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tracing",

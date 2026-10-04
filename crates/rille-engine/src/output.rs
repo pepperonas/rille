@@ -146,6 +146,21 @@ pub fn is_xrun(gap: Duration, frames: usize, sample_rate: u32) -> bool {
     gap.as_secs_f64() > expected * XRUN_FACTOR
 }
 
+/// Common sample rates a device supports (`None` = system default device).
+pub fn device_rates(device_id: Option<&str>) -> Vec<u32> {
+    let host = cpal::default_host();
+    let Ok(device) = find_device(&host, device_id) else {
+        return Vec::new();
+    };
+    let Ok(configs) = device.supported_output_configs() else {
+        return Vec::new();
+    };
+    let ranges: Vec<RateRange> = configs
+        .map(|c| (c.channels(), c.min_sample_rate(), c.max_sample_rate()))
+        .collect();
+    supported_rates(&ranges)
+}
+
 fn find_device(host: &cpal::Host, id: Option<&str>) -> Result<cpal::Device, OutputError> {
     match id {
         None => host.default_output_device().ok_or(OutputError::NoDevice),

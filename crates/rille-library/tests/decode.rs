@@ -140,5 +140,8 @@ fn absurd_sample_rate_is_rejected() {
     let dir = TempDir::new().unwrap();
     let path = fixture(&dir, "slow.wav");
     write_wav(&path, 1_000, 2, &sine(1_000, 100.0, 0.5, 2), None);
-    assert!(matches!(decode_file(&path, 48_000, 1), Err(DecodeError::UnsupportedRate(1_000))));
+    assert!(matches!(
+        decode_file(&path, 48_000, 1),
+        Err(DecodeError::UnsupportedRate(1_000))
+    ));
 }

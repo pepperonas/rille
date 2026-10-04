@@ -24,6 +24,8 @@ rille-core.workspace = true
 rille-engine.workspace = true
 rille-midi.workspace = true
 rille-library.workspace = true
+serde_json = "1"
+assert_no_alloc = "1.1"
 
 [lints]
 workspace = true

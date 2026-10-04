@@ -43,6 +43,9 @@ mod tests {
 
     #[test]
     fn same_rate_is_identity() {
-        assert_eq!(resample_stereo(&[0.1, 0.2, 0.3], 48_000, 48_000).unwrap(), vec![0.1, 0.2]);
+        assert_eq!(
+            resample_stereo(&[0.1, 0.2, 0.3], 48_000, 48_000).unwrap(),
+            vec![0.1, 0.2]
+        );
     }
 }
