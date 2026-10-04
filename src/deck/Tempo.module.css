@@ -1,0 +1,99 @@
+.column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 0;
+}
+
+.range {
+  border: var(--stroke-hairline) solid var(--md-outline-variant);
+  border-radius: var(--shape-sm);
+  padding: var(--space-1) var(--space-2);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-s);
+  letter-spacing: var(--tracking-caps);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.range:hover {
+  background: color-mix(in srgb, var(--md-on-surface) calc(var(--state-hover) * 100%), transparent);
+}
+
+.readout {
+  font: var(--type-label-m);
+  color: var(--md-on-surface);
+  white-space: nowrap;
+}
+
+.readout[data-centred] {
+  color: var(--md-on-surface-variant);
+}
+
+.fader {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.toggle,
+.bendButton {
+  display: grid;
+  place-items: center;
+  height: var(--size-icon-button);
+  border: var(--stroke-hairline) solid var(--md-outline-variant);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-m);
+  letter-spacing: var(--tracking-caps);
+  cursor: pointer;
+  touch-action: none;
+  transition: border-radius var(--motion-duration-short) var(--motion-easing-spatial-fast),
+    background-color var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.toggle {
+  border-radius: var(--shape-sm);
+  padding: 0 var(--space-3);
+}
+
+.toggle[aria-pressed='true'] {
+  border-color: transparent;
+  border-radius: var(--shape-full);
+  background: var(--accent-container);
+  color: var(--on-accent-container);
+}
+
+.bend {
+  display: flex;
+  margin-left: auto;
+  gap: var(--space-1);
+}
+
+.bendButton {
+  width: var(--size-icon-button);
+  border-radius: var(--shape-full);
+  font: var(--type-title-m);
+}
+
+.bendButton[data-active] {
+  border-color: transparent;
+  border-radius: var(--shape-md);
+  background: var(--accent-container);
+  color: var(--on-accent-container);
+}
+
+.toggle:focus-visible,
+.bendButton:focus-visible,
+.range:focus-visible {
+  outline: var(--stroke-thick) solid var(--md-primary);
+  outline-offset: var(--space-1);
+}

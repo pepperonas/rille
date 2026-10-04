@@ -152,6 +152,10 @@ pub fn software_values(s: &Snapshot) -> Vec<(rille_midi::TakeoverKey, f32)> {
             ((d, Control::EqMid), s.eq[i][1]),
             ((d, Control::EqHi), s.eq[i][2]),
             ((d, Control::ColorFx), s.filter[i]),
+            (
+                (d, Control::TempoFader),
+                crate::dto::tempo_to_fader(s.decks[i].tempo),
+            ),
         ]);
     }
     v
@@ -175,7 +179,7 @@ pub fn lamp_state(snapshot: &Snapshot) -> LampState {
 }
 
 /// Engine commands for a controller action. Actions whose features arrive in later milestones
-/// (tempo, sync, pads, …) produce nothing yet.
+/// (sync, pads, library, headphones) produce nothing yet.
 pub fn commands_for(action: ControllerAction) -> Vec<Command> {
     use ControllerAction as A;
     let deck = |d, c| Command::Deck(d, c);
@@ -190,6 +194,16 @@ pub fn commands_for(action: ControllerAction) -> Vec<Command> {
             pressed: false,
         } => vec![deck(d, DeckCommand::CueRelease)],
         A::JumpToStart(d) => vec![deck(d, DeckCommand::JumpToStart)],
+        A::Reverse { deck: d, on } => vec![deck(d, DeckCommand::Reverse(on))],
+        A::CycleTempoRange(d) => vec![deck(d, DeckCommand::CycleTempoRange)],
+        A::Tempo { deck: d, value } => vec![deck(d, DeckCommand::Tempo(value))],
+        A::PitchBend { deck: d, ticks } => vec![deck(d, DeckCommand::Bend(ticks))],
+        // The mapping only reports touches while vinyl mode is on.
+        A::ScratchTouch { deck: d, touching } => {
+            vec![deck(d, DeckCommand::ScratchTouch(touching))]
+        }
+        A::Scratch { deck: d, ticks } => vec![deck(d, DeckCommand::Scratch(ticks))],
+        A::Search { deck: d, ticks } => vec![deck(d, DeckCommand::Search(ticks))],
         A::ChannelFader { deck: d, value } => {
             vec![Command::Mixer(MixerCommand::ChannelFader(d, value))]
         }
@@ -483,15 +497,17 @@ mod tests {
     }
 
     #[test]
-    fn every_absolute_control_but_tempo_is_seeded_from_the_engine() {
+    fn every_absolute_control_is_seeded_from_the_engine() {
         let mut s = Snapshot::default();
         s.eq[1] = [0.1, 0.2, 0.3];
         s.filter[0] = 0.9;
+        s.decks[1].tempo = -1.0;
         let v = software_values(&s);
         assert!(v.contains(&((Scope::Deck(DeckId::B), Control::EqHi), 0.3)));
         assert!(v.contains(&((Scope::Deck(DeckId::A), Control::ColorFx), 0.9)));
-        // tempo comes with M4; until then the session's default (centre) applies
-        assert_eq!(v.len(), 1 + 2 * 5);
+        assert!(v.contains(&((Scope::Deck(DeckId::B), Control::TempoFader), 0.0)));
+        assert!(v.contains(&((Scope::Deck(DeckId::A), Control::TempoFader), 0.5)));
+        assert_eq!(v.len(), 1 + 2 * 6);
     }
 
     #[test]
@@ -549,6 +565,31 @@ mod tests {
             commands_for(A::TransitionFx { pressed: false }).is_empty(),
             "press, not release"
         );
+        let d = DeckId::A;
+        let cases = [
+            (
+                A::Tempo {
+                    deck: d,
+                    value: 0.5,
+                },
+                DeckCommand::Tempo(0.5),
+            ),
+            (A::CycleTempoRange(d), DeckCommand::CycleTempoRange),
+            (A::PitchBend { deck: d, ticks: 3 }, DeckCommand::Bend(3)),
+            (A::Scratch { deck: d, ticks: -4 }, DeckCommand::Scratch(-4)),
+            (A::Search { deck: d, ticks: 2 }, DeckCommand::Search(2)),
+            (A::Reverse { deck: d, on: true }, DeckCommand::Reverse(true)),
+            (
+                A::ScratchTouch {
+                    deck: d,
+                    touching: false,
+                },
+                DeckCommand::ScratchTouch(false),
+            ),
+        ];
+        for (action, cmd) in cases {
+            assert_eq!(commands_for(action), [Command::Deck(d, cmd)], "{action:?}");
+        }
     }
 
     #[test]

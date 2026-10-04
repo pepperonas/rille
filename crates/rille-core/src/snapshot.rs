@@ -1,5 +1,5 @@
 use crate::DeckId;
-use crate::command::{CrossfaderCurve, TransitionKind};
+use crate::command::{CrossfaderCurve, TempoRange, TransitionKind};
 
 /// State of one deck as seen at the end of an audio block.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -17,6 +17,14 @@ pub struct DeckSnapshot {
     pub previewing: bool,
     /// Post-fader channel peak (linear, decaying), left/right.
     pub peak: [f32; 2],
+    /// Tempo fader, -1.0 (top, slowest) ..= +1.0.
+    pub tempo: f32,
+    pub tempo_range: TempoRange,
+    pub keylock: bool,
+    /// Current playback rate including bend, scratch and direction (negative = backwards).
+    pub rate: f32,
+    pub reverse: bool,
+    pub scratching: bool,
 }
 
 /// State of the transition effect.

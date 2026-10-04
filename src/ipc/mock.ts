@@ -11,12 +11,16 @@ import type {
   MixerAction,
   StateFrame,
 } from './types';
+import { NEXT_RANGE, RANGE_SPAN } from '../state/extrapolate';
 
 const RATE = 48_000;
 const BANDS: Band[] = ['low', 'mid', 'high'];
 const TRACK_SECONDS = 210;
 
-type MockDeck = DeckFrame;
+/** Bend held from the app, as in the engine (`BEND_HOLD`). */
+const BEND_HOLD = 0.04;
+
+type MockDeck = DeckFrame & { bend: -1 | 0 | 1 };
 
 function emptyDeck(): MockDeck {
   return {
@@ -27,7 +31,20 @@ function emptyDeck(): MockDeck {
     cue: 0,
     previewing: false,
     peak: [0, 0],
+    tempo: 0,
+    tempoRange: 'ten',
+    keylock: false,
+    rate: 1,
+    reverse: false,
+    scratching: false,
+    bend: 0,
   };
+}
+
+/** Rate the engine would play at: tempo within the range, bend, direction. */
+function mockRate(d: MockDeck): number {
+  const base = (1 + d.tempo * RANGE_SPAN[d.tempoRange]) * (1 + d.bend * BEND_HOLD);
+  return d.reverse ? -base : base;
 }
 
 /** Fake controller traffic for the MIDI monitor in demo mode. */
@@ -115,8 +132,10 @@ export function createMockBackend(): Backend {
       }
     }
     decks.forEach((d, i) => {
+      d.rate = mockRate(d);
       if (d.playing) {
-        d.position = Math.min(d.frames, d.position + frames);
+        d.position = Math.max(0, Math.min(d.frames, d.position + frames * d.rate));
+        if (d.reverse && d.position <= 0) d.playing = false;
         if (d.position >= d.frames) {
           d.playing = false;
           d.previewing = false;
@@ -141,6 +160,12 @@ export function createMockBackend(): Backend {
       cue: d.cue,
       previewing: d.previewing,
       peak: d.peak,
+      tempo: d.tempo,
+      tempoRange: d.tempoRange,
+      keylock: d.keylock,
+      rate: d.rate,
+      reverse: d.reverse,
+      scratching: d.scratching,
     });
     const peak = Math.max(decks[0].peak[0], decks[1].peak[0]) * state.masterGain;
     return {
@@ -163,7 +188,9 @@ export function createMockBackend(): Backend {
   }
 
   function deckAction(d: MockDeck, action: DeckAction) {
-    if (d.frames === 0 && action.type !== 'unload') return;
+    // Transport needs a track; tempo, range and keylock can be set ahead (as in the engine).
+    const settings = ['unload', 'tempo', 'tempoRange', 'cycleTempoRange', 'keylock', 'bend', 'reverse'];
+    if (d.frames === 0 && !settings.includes(action.type)) return;
     switch (action.type) {
       case 'play':
         d.previewing = false;
@@ -206,10 +233,32 @@ export function createMockBackend(): Backend {
       case 'seek':
         d.position = Math.max(0, Math.min(d.frames, action.frame));
         break;
-      case 'unload':
-        Object.assign(d, emptyDeck());
+      case 'unload': {
+        // Tempo, range and keylock stay with the deck, like on a CDJ.
+        const { tempo, tempoRange, keylock } = d;
+        Object.assign(d, emptyDeck(), { tempo, tempoRange, keylock });
+        break;
+      }
+      case 'tempo':
+        d.tempo = Number.isFinite(action.value) ? Math.max(-1, Math.min(1, action.value)) : 0;
+        break;
+      case 'tempoRange':
+        d.tempoRange = action.range;
+        break;
+      case 'cycleTempoRange':
+        d.tempoRange = NEXT_RANGE[d.tempoRange];
+        break;
+      case 'keylock':
+        d.keylock = action.on;
+        break;
+      case 'bend':
+        d.bend = action.direction;
+        break;
+      case 'reverse':
+        d.reverse = action.on;
         break;
     }
+    d.rate = mockRate(d);
   }
 
   function mixerAction(action: MixerAction) {
@@ -319,7 +368,15 @@ export function createMockBackend(): Backend {
     async loadFile(deck, path) {
       const id = nextId++;
       const d = decks[idx(deck)];
-      Object.assign(d, emptyDeck(), { trackId: id, frames: TRACK_SECONDS * RATE });
+      // Tempo, range and keylock stay with the deck across loads, as in the engine.
+      const { tempo, tempoRange, keylock } = d;
+      Object.assign(d, emptyDeck(), {
+        trackId: id,
+        frames: TRACK_SECONDS * RATE,
+        tempo,
+        tempoRange,
+        keylock,
+      });
       const title = path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? 'Unbenannt';
       const preset = demo ? DEMO_TRACKS[title] : undefined;
       if (preset) {
@@ -327,6 +384,11 @@ export function createMockBackend(): Backend {
         d.cue = Math.round(16.2 * RATE);
         d.playing = true;
         state.channelFader[idx(deck)] = preset[1];
+        // Deck 1 runs slightly faster with keylock, so the screenshots show the tempo section.
+        if (deck === 'a') {
+          d.tempo = 0.24;
+          d.keylock = true;
+        }
       }
       setTimeout(
         () => emit('deck-loaded', { deck, trackId: id, title, durationSecs: TRACK_SECONDS }),

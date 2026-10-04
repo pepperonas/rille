@@ -16,6 +16,7 @@ use crate::dsp::eq::Eq;
 use crate::dsp::filter::BipolarFilter;
 use crate::dsp::transition::{Outcome, Transition};
 use crate::meter::PeakMeter;
+use crate::player::Player;
 use crate::smooth::Smoother;
 use crate::transport::Transport;
 
@@ -205,6 +206,7 @@ struct Deck {
     fade_in: u32,
     eq: Eq,
     filter: BipolarFilter,
+    player: Player,
 }
 
 impl Deck {
@@ -220,6 +222,7 @@ impl Deck {
             fade_in: 0,
             eq: Eq::new(sample_rate),
             filter: BipolarFilter::new(sample_rate),
+            player: Player::new(sample_rate, max_block),
         }
     }
 
@@ -255,39 +258,38 @@ impl Deck {
             self.tail = None;
             return false;
         };
-        let length = self.declick_frames as f32;
         let playing = self.transport.playing;
-        let start = self.transport.position as usize;
-        for (i, frame) in out.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-            let mut sample = [0.0f32; 2];
-            if playing {
-                let [l, r] = track.frame(start + i);
-                let gain = if self.fade_in > 0 {
-                    self.fade_in -= 1;
-                    1.0 - self.fade_in as f32 / length
-                } else {
-                    1.0
-                };
-                sample = [l * gain, r * gain];
+        let hit = self.player.render(track, playing, out);
+        let length = self.declick_frames as f32;
+        for frame in out.as_chunks_mut::<2>().0 {
+            if self.fade_in > 0 {
+                self.fade_in -= 1;
+                let gain = 1.0 - self.fade_in as f32 / length;
+                frame[0] *= gain;
+                frame[1] *= gain;
             }
             if let Some(tail) = &mut self.tail {
                 let gain = tail.remaining as f32 / length;
                 let [l, r] = track.frame(tail.position as usize);
-                sample[0] += l * gain;
-                sample[1] += r * gain;
+                frame[0] += l * gain;
+                frame[1] += r * gain;
                 tail.position += 1;
                 tail.remaining -= 1;
                 if tail.remaining == 0 {
                     self.tail = None;
                 }
             }
-            *frame = sample;
         }
-        if playing {
-            self.transport.advance(frames as u64)
-        } else {
-            false
+        self.transport.position =
+            (self.player.playhead().floor() as u64).min(self.transport.frames);
+        if playing && hit.end {
+            self.transport.pause();
+            return true;
         }
+        if playing && hit.start && self.player.reverse() {
+            self.transport.pause();
+        }
+        false
     }
 }
 
@@ -481,6 +483,7 @@ impl Engine {
         let deck = &mut self.decks[load.deck.index()];
         let track_id = load.track.id;
         deck.transport = Transport::new(load.track.frames() as u64);
+        deck.player.reset_for_track();
         let old = deck.track.replace(load.track);
         self.release(old);
         let _ = self.io.events_tx.push(EngineEvent::TrackLoaded {
@@ -526,6 +529,7 @@ impl Engine {
             self.transition.release_deck(id);
             let deck = &mut self.decks[id.index()];
             deck.transport = Transport::new(0);
+            deck.player.reset_for_track();
             let old = deck.track.take();
             self.release(old);
             return;
@@ -533,6 +537,7 @@ impl Engine {
         let deck = &mut self.decks[id.index()];
         let before = deck.transport;
         let t = &mut deck.transport;
+        let p = &mut deck.player;
         match cmd {
             DeckCommand::PlayPause => t.play_pause(),
             DeckCommand::Play => t.play(),
@@ -543,6 +548,23 @@ impl Engine {
             DeckCommand::JumpToCue => t.jump_to_cue(),
             DeckCommand::Seek { frame } => t.seek(frame),
             DeckCommand::Unload => {}
+            DeckCommand::Tempo(position) => p.set_tempo(position),
+            DeckCommand::TempoRange(r) => p.set_range(r),
+            DeckCommand::CycleTempoRange => p.cycle_range(),
+            DeckCommand::Keylock(on) => p.set_keylock(on),
+            DeckCommand::Bend(ticks) => p.bend(ticks),
+            DeckCommand::BendHold(dir) => p.bend_hold(dir),
+            DeckCommand::ScratchTouch(on) => p.scratch_touch(on),
+            DeckCommand::Scratch(ticks) => p.scratch(ticks),
+            DeckCommand::Search(ticks) => {
+                p.search(ticks, t.frames);
+                t.position = (p.playhead() as u64).min(t.frames);
+            }
+            DeckCommand::Reverse(on) => p.set_reverse(on),
+        }
+        // A jump made by the transport (cue, seek, jump to start) moves the playhead.
+        if deck.transport.position != before.position && !matches!(cmd, DeckCommand::Search(_)) {
+            deck.player.jump_to(deck.transport.position as f64);
         }
         let started = deck.transport.playing && !before.playing;
         deck.declick(before);
@@ -606,6 +628,12 @@ impl Engine {
             cue: d.transport.cue,
             previewing: d.transport.previewing,
             peak: d.meter.value(),
+            tempo: d.player.tempo(),
+            tempo_range: d.player.range(),
+            keylock: d.player.keylock(),
+            rate: d.player.rate(),
+            reverse: d.player.reverse(),
+            scratching: d.player.scratching(),
         };
         let snapshot = Snapshot {
             frame_clock: self.frame_clock,
@@ -1048,6 +1076,57 @@ mod tests {
         h.send(deck_a(DeckCommand::Play));
         engine.process(&mut [0.0; 512], 2);
         assert!(h.snapshot().transition.releasing);
+    }
+
+    #[test]
+    fn tempo_keylock_and_reverse_reach_the_deck() {
+        use rille_core::TempoRange;
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, sine_track(1, 30))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(deck_a(DeckCommand::TempoRange(TempoRange::Sixteen)));
+        h.send(deck_a(DeckCommand::Tempo(-1.0)));
+        h.send(deck_a(DeckCommand::Keylock(true)));
+        h.send(deck_a(DeckCommand::Play));
+        settle(&mut engine);
+        let s = h.snapshot().decks[0];
+        assert_eq!(
+            (s.tempo, s.tempo_range, s.keylock),
+            (-1.0, TempoRange::Sixteen, true)
+        );
+        assert!((s.rate - 0.84).abs() < 0.001, "rate {}", s.rate);
+        let before = s.position;
+        h.send(deck_a(DeckCommand::Reverse(true)));
+        settle(&mut engine);
+        let s = h.snapshot().decks[0];
+        assert!(s.reverse && s.rate < 0.0);
+        assert!(s.position < before, "moved backwards");
+    }
+
+    #[test]
+    fn cue_jump_with_keylock_keeps_sounding() {
+        let (mut engine, mut h) = engine_pair(SR, 256);
+        h.load(DeckId::A, sine_track(1, 30))
+            .map_err(|_| ())
+            .unwrap();
+        h.send(mix(MixerCommand::Crossfader(0.0)));
+        h.send(deck_a(DeckCommand::Keylock(true)));
+        h.send(deck_a(DeckCommand::Tempo(0.5)));
+        h.send(deck_a(DeckCommand::Play));
+        settle(&mut engine);
+        h.send(deck_a(DeckCommand::Seek {
+            frame: 10 * u64::from(SR),
+        }));
+        let mut out = vec![0.0; 256 * 2];
+        let mut quiet_blocks = 0;
+        for _ in 0..20 {
+            engine.process(&mut out, 2);
+            if out.iter().all(|v| v.abs() < 0.05) {
+                quiet_blocks += 1;
+            }
+        }
+        assert_eq!(quiet_blocks, 0, "no gap after the jump");
     }
 
     #[test]

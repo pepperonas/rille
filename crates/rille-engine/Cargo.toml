@@ -13,6 +13,7 @@ assert_no_alloc = "1.1"
 cpal = "0.18"
 rille-core.workspace = true
 rtrb = "0.4"
+signalsmith-stretch = "0.1"
 thiserror = "2"
 triple_buffer = "9"
 

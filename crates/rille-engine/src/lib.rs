@@ -6,6 +6,7 @@ pub mod dsp;
 pub mod engine;
 pub mod meter;
 pub mod output;
+pub mod player;
 pub mod slot;
 pub mod smooth;
 pub mod transport;

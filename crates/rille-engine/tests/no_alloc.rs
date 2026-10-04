@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use assert_no_alloc::{AllocDisabler, assert_no_alloc, reset_violation_count, violation_count};
-use rille_core::{Command, DeckCommand, DeckId, EqBand, MixerCommand, TrackAudio};
+use rille_core::{Command, DeckCommand, DeckId, EqBand, MixerCommand, TempoRange, TrackAudio};
 use rille_engine::engine_pair;
 
 #[global_allocator]
@@ -68,6 +68,29 @@ fn process_never_allocates() {
                     block % 100 == 5,
                 )));
                 handle.send(Command::Mixer(MixerCommand::Filter(DeckId::A, 1.0 - v)));
+            }
+            25 => {
+                let deck = DeckId::A;
+                handle.send(Command::Deck(deck, DeckCommand::Keylock(block % 100 < 50)));
+                handle.send(Command::Deck(
+                    deck,
+                    DeckCommand::Tempo(((block % 9) as f32 - 4.0) / 4.0),
+                ));
+                handle.send(Command::Deck(
+                    deck,
+                    DeckCommand::TempoRange(TempoRange::Sixteen),
+                ));
+                handle.send(Command::Deck(deck, DeckCommand::Bend(7)));
+                handle.send(Command::Deck(
+                    DeckId::B,
+                    DeckCommand::ScratchTouch(block % 100 < 30),
+                ));
+                handle.send(Command::Deck(DeckId::B, DeckCommand::Scratch(-12)));
+                handle.send(Command::Deck(
+                    DeckId::B,
+                    DeckCommand::Reverse(block % 200 < 100),
+                ));
+                handle.send(Command::Deck(DeckId::A, DeckCommand::Search(3)));
             }
             15 => {
                 // Start or cancel a transition effect; cycle the kind now and then.

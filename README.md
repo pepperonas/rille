@@ -97,9 +97,9 @@
 [![No CDN](https://img.shields.io/badge/remote%20content-none%20(strict%20CSP)-2E7D32)](#-architecture)
 
 > **Status: early development (v0.1.0).** Two decks play files dropped from the Finder, with
-> Pioneer-style cue, isolator EQ, filter, transition FX, channel faders, crossfader and meters —
-> controllable with mouse, keyboard and the DDJ-200. Tempo/keylock, the library, waveforms and
-> beat features follow milestone by milestone (see [Roadmap](#%EF%B8%8F-roadmap)). There is no packaged release yet.
+> Pioneer-style cue, tempo with keylock, pitch bend, scratch and reverse, isolator EQ, filter,
+> transition FX, channel faders, crossfader and meters — controllable with mouse, keyboard and
+> the DDJ-200. The library, waveforms and beat features follow milestone by milestone (see [Roadmap](#%EF%B8%8F-roadmap)). There is no packaged release yet.
 
 ---
 
@@ -147,6 +147,16 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 - **Pioneer-style cue** — paused: set the cue point; hold on the cue point to preview and
   release to return; press Play while holding to keep playing; while playing: back to cue and
   pause. Shift + Cue jumps to the start.
+- **Tempo** — tempo fader per deck (top = slower, as on the controller) with four ranges:
+  ±6 %, ±10 %, ±16 % and wide (±50 %); the change is shown in percent. Without keylock the
+  pitch follows the tempo, like a turntable (4-point Hermite interpolation).
+- **Keylock** — keeps the pitch while the tempo changes, with
+  [Signalsmith Stretch](https://signalsmith-audio.co.uk/code/stretch/). Its latency is
+  compensated, so the stretched audio lines up with the playhead (measured: within 2 ms), and
+  after a cue jump a short varispeed bridge covers the stretcher's start-up — no gap.
+- **Pitch bend, scratch, search, reverse** — hold − / + to nudge (±4 %), the jog rim bends,
+  the platter scratches in vinyl mode, Shift + platter searches, REV plays backwards while held
+  and stops at the track start.
 - **Mixer** — channel faders with a DJ taper, master level, crossfader with three curves
   (Blend = constant power, Linear, Cut for scratching), segmented peak meters per channel and
   master.
@@ -170,7 +180,7 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 - **About dialog** — version, donate and rate buttons, links to the source; external links may
   open only the allow-listed URLs.
 
-**Coming next** — tempo/keylock/scratch (M4), library with BPM and beatgrid analysis (M5), waveforms (M6), sync, hot cues, loops and
+**Coming next** — library with BPM and beatgrid analysis (M5), waveforms (M6), sync, hot cues, loops and
 pads (M7), headphone cueing (M8). See the [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
@@ -181,14 +191,14 @@ mode and the MIDI monitor are in the settings.
 
 | Control | Function | With Shift | Status |
 |---|---|---|---|
-| Play/Pause | Start / stop | Reverse while held | ✅ / M4 |
+| Play/Pause | Start / stop | Reverse while held | ✅ |
 | Cue | Pioneer cue (set, preview, back) | Jump to track start | ✅ |
 | Channel fader | Level | Fader start: up = play, back to zero = return to cue | ✅ |
 | Crossfader | Blend (curve chosen in the app) | — | ✅ |
-| Jog touch + platter | Scratch (vinyl mode) | Fast search | M4 |
-| Jog rim | Pitch bend | Browse the library | M4 / M5 |
-| Tempo fader | Tempo (top = slower, as printed) | — | M4 |
-| Beat Sync | Short: sync · long: sync lock | Cycle tempo range (±6/10/16 %/wide) | M7 |
+| Jog touch + platter | Scratch (vinyl mode); bend with vinyl mode off | Fast search | ✅ |
+| Jog rim | Pitch bend | Browse the library | ✅ / M5 |
+| Tempo fader | Tempo (top = slower, as printed), soft takeover | — | ✅ |
+| Beat Sync | Short: sync · long: sync lock | Cycle tempo range (±6/10/16 %/wide) | M7 / ✅ |
 | EQ Hi / Mid / Low | Three-band isolator EQ | — | ✅ |
 | CFX | Bipolar filter (left low-pass, right high-pass) | — | ✅ |
 | Headphone cue | Pre-listen the channel | Load the selected track | M8 / M5 |
@@ -230,6 +240,10 @@ Everything works without a controller:
 | Load a track | Drop an audio file from the Finder onto a deck |
 | Play / Pause, Cue | Click, or focus the button and press Space / Enter (Cue: hold to preview) |
 | Jump to start | Shift + click on Cue |
+| Tempo | Tempo fader right of the deck: drag (top = slower), arrow keys, double-click = 0 % |
+| Tempo range | Chip above the tempo fader (±6 % → ±10 % → ±16 % → wide) |
+| Keylock | KEY button |
+| Pitch bend, reverse | Hold − / + or REV (mouse or Space / Enter) |
 | Faders | Drag; arrow keys (Shift = larger steps), Home / End; double-click resets |
 | EQ / filter knobs | Drag up/down (Shift = fine), mouse wheel, arrow keys; double-click or Delete = centre |
 | EQ kill | Click the band name (HI / MID / LOW) under the knob |
@@ -279,6 +293,12 @@ pnpm tauri dev        # build and start the app
   moves never zipper. Curves: channel fader squared (−12 dB at half), crossfader constant power
   / linear / cut.
 - **Declick.** Stops, starts, cue jumps and seeks become 4 ms fades or crossfades.
+- **Playhead and rate.** Each deck plays from a fractional playhead at a smoothed rate (tempo ×
+  bend, negative in reverse, the platter speed while scratching). Without keylock the track is
+  read with 4-point Hermite interpolation; with keylock Signalsmith Stretch gets exactly
+  `rate × block` input frames per block. Its C++ code is checked for allocations through the
+  macOS `malloc_logger` hook (which, unlike `assert_no_alloc`, also sees C++): zero in
+  `process`, `reset` and `seek`.
 - **Device changes.** A wait-free `EngineSlot` hands the engine from one output stream to the
   next, so loaded tracks, positions and cue points survive a device switch. cpal reports errors
   partly on the render thread and every CoreAudio overload as an "xrun" error — rille only
@@ -336,6 +356,7 @@ pnpm tauri dev        # build and start the app
 | Buffer | 256 frames @ 48 kHz without dropouts | 256 frames fixed, 0 xruns (MacBook, idle) |
 | Output latency | — | 5.3 ms (buffer + device) |
 | Idle CPU | minimal | 0.2 % (debug build, nothing playing) |
+| Two decks rendering, keylock off / on | — | 0.6 % / 2.2 % of one core (release, `examples/bench_keylock.rs`) |
 | Decode + resample a 3:43 MP3 | track load < 300 ms (analysed tracks) | ~360 ms (release) — a PCM cache arrives with the library (M5) |
 | Controller → audible | < 10 ms (without device latency) | one audio block (≤ 5.3 ms) + MIDI |
 
@@ -346,11 +367,12 @@ and CI commits new numbers whenever they change.
 
 | Suite | Where | Highlights |
 |---|---|---|
-| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps |
-| Allocation guard | `crates/rille-engine/tests/no_alloc.rs` | 2,000 blocks under `assert_no_alloc`, plus a counter-check that a planted allocation is caught |
+| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, keylock pitch and timing at ±16 % (zero crossings), keylock alignment with the playhead, no gap after jumps at any tempo, reverse, scratch, bend, search, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps |
+| Allocation guard | `crates/rille-engine/tests/no_alloc.rs` | 2,000 blocks under `assert_no_alloc` incl. tempo, keylock, scratch and reverse, plus a counter-check that a planted allocation is caught |
+| C++ allocation guard | `crates/rille-engine/tests/stretch_alloc.rs` | Signalsmith Stretch `process`/`reset`/`seek` at changing rates through the `malloc_logger` hook, with a counter-check |
 | CoreMIDI round trip | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtual DDJ-200 → port → decoder → action, and LEDs back |
 | Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | store and load races, position extrapolation, token sync and contrast, "no raw values" guard |
-| E2E (Playwright) | `e2e/` | load, play, cue, eject, keyboard operation, faders, settings, controller UI — against the mock backend |
+| E2E (Playwright) | `e2e/` | load, play, cue, eject, keyboard operation, faders, tempo range and readout, keylock, reverse and bend while held, layout at 1024×680, settings, controller UI — against the mock backend |
 
 Practices: Clippy with `-D warnings`, `unwrap`/`expect`/`panic` denied outside tests, and new
 guards are mutation-checked (the test is run once against deliberately broken code to prove it
@@ -387,7 +409,7 @@ rille/
 | M1 | Engine core: playback, cue, mixer, meters, devices | ✅ |
 | M2 | Pioneer DDJ-200: mapping, LEDs, takeover, hotplug, monitor | ✅ (hardware acceptance pending) |
 | M3 | Isolator EQ with kill, bipolar filter, transition FX (echo-out, filter-out) | ✅ |
-| M4 | Tempo ranges, keylock (Signalsmith Stretch), pitch bend, scratch, reverse | ⏳ |
+| M4 | Tempo ranges, keylock (Signalsmith Stretch), pitch bend, scratch, reverse | ✅ (jog calibration at hardware acceptance) |
 | M5 | Library: import, SQLite, BPM/beatgrid analysis, search, drag & drop | ⏳ |
 | M6 | Waveforms (overview + scrolling detail, frequency colours), deck UI | ⏳ |
 | M7 | Sync & sync lock, hot cues, beat loops, beat jump, pad modes | ⏳ |

@@ -7,6 +7,15 @@ All notable changes to rille are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- M4 tempo: tempo fader per deck with ranges ±6 / ±10 / ±16 % / wide (±50 %), top = slower as
+  printed on the DDJ-200; varispeed via 4-point Hermite interpolation. Keylock with Signalsmith
+  Stretch (latency-compensated, a varispeed bridge covers its start-up after jumps), pitch bend
+  (jog rim and held − / + buttons), scratch in vinyl mode, Shift + platter search, reverse while
+  held. DDJ-200: tempo fader with soft takeover, Shift + Sync cycles the range.
+- Deck UI: tempo fader with range chip and percent readout, KEY, REV and bend buttons; the time
+  readout extrapolates with the real playback rate (also backwards).
+- `tests/stretch_alloc.rs`: proves through the macOS `malloc_logger` hook that Signalsmith
+  Stretch does not allocate in `process`, `reset` and `seek`.
 - M3 mixer DSP: three-band isolator EQ per channel (Linkwitz-Riley 4th order at 200 Hz /
   2 kHz, flat when neutral, kill per band, up to +6 dB), bipolar channel filter (TPT
   state-variable filter, bit-exact bypass in the centre), and transition FX on the louder

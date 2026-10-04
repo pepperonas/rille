@@ -185,3 +185,111 @@ test('quick repeated input accumulates instead of getting lost', async ({ page }
   for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowUp', { delay: 0 });
   await expect(mid).toHaveAttribute('aria-valuenow', '60');
 });
+
+test('tempo fader: top is slower, range chip, double click resets', async ({ page }) => {
+  const a = deck(page, 'a');
+  await a.getByRole('button', { name: 'Demo-Track laden' }).click();
+  const tempo = a.getByRole('slider', { name: 'Tempo' });
+  await expect(tempo).toHaveAttribute('aria-valuetext', '0.00 %');
+  await tempo.focus();
+  await page.keyboard.press('ArrowUp');
+  await expect(tempo).toHaveAttribute('aria-valuetext', '−0.40 %');
+  await expect(a.getByText('−0.40 %', { exact: true })).toBeVisible();
+  await page.keyboard.press('Home'); // bottom = fastest (the fader's minimum)
+  await expect(tempo).toHaveAttribute('aria-valuetext', '+10.00 %');
+
+  const range = a.getByRole('button', { name: /^Tempobereich/ });
+  await expect(range).toHaveText('±10 %');
+  await range.click();
+  await expect(range).toHaveText('±16 %');
+  await expect(tempo).toHaveAttribute('aria-valuetext', '+16.00 %');
+  await range.dblclick();
+  await expect(range).toHaveText('±6 %', { timeout: 2000 });
+
+  await tempo.dblclick();
+  await expect(tempo).toHaveAttribute('aria-valuetext', '0.00 %');
+});
+
+test('keylock toggles, reverse plays backwards while held', async ({ page }) => {
+  const a = deck(page, 'a');
+  await a.getByRole('button', { name: 'Demo-Track laden' }).click();
+  const key = a.getByRole('button', { name: 'Keylock' });
+  await expect(key).toHaveAttribute('aria-pressed', 'false');
+  await key.click();
+  await expect(key).toHaveAttribute('aria-pressed', 'true');
+
+  const elapsed = a.getByLabel('Gespielt');
+  await a.getByRole('button', { name: 'Play' }).click();
+  await expect(elapsed).not.toHaveText(/^0:0[01]\./, { timeout: 4000 });
+  const before = await elapsed.textContent();
+
+  const rev = a.getByRole('button', { name: 'Rückwärts (halten)' });
+  await rev.hover();
+  await page.mouse.down();
+  await expect(rev).toHaveAttribute('aria-pressed', 'true');
+  await page.waitForTimeout(600);
+  const during = await elapsed.textContent();
+  await page.mouse.up();
+  await expect(rev).toHaveAttribute('aria-pressed', 'false');
+  expect(during && before && during < before).toBeTruthy();
+});
+
+test('pitch bend acts only while held, also from the keyboard', async ({ page }) => {
+  const b = deck(page, 'b');
+  await b.getByRole('button', { name: 'Demo-Track laden' }).click();
+  const faster = b.getByRole('button', { name: 'Schneller (halten)' });
+  await faster.focus();
+  await page.keyboard.down('Space');
+  await expect(faster).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.up('Space');
+  await expect(faster).toHaveAttribute('aria-pressed', 'false');
+  // Losing focus while held must not leave the bend stuck.
+  await page.keyboard.down('Enter');
+  await expect(faster).toHaveAttribute('aria-pressed', 'true');
+  await page.keyboard.press('Tab');
+  await page.keyboard.up('Enter');
+  await expect(faster).toHaveAttribute('aria-pressed', 'false');
+});
+
+for (const [width, height] of [
+  [1440, 900],
+  [1024, 680],
+] as const) {
+  test(`deck controls fit at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height });
+    await page.goto('/?demo');
+    for (const d of ['a', 'b'] as const) {
+      const panel = deck(page, d);
+      await expect(panel.getByRole('heading')).toBeVisible();
+      const box = await panel.boundingBox();
+      const tempo = await panel.getByRole('slider', { name: 'Tempo' }).boundingBox();
+      const play = await panel.getByRole('button', { name: /^(Play|Pause)$/ }).boundingBox();
+      const bend = await panel.getByRole('button', { name: 'Schneller (halten)' }).boundingBox();
+      const time = await panel.getByLabel('Gespielt').boundingBox();
+      expect(box && tempo && play && bend && time).toBeTruthy();
+      if (!box || !tempo || !play || !bend || !time) return;
+      for (const el of [tempo, play, bend]) {
+        expect(el.x).toBeGreaterThanOrEqual(box.x);
+        expect(el.x + el.width).toBeLessThanOrEqual(box.x + box.width);
+        expect(el.y + el.height).toBeLessThanOrEqual(box.y + box.height);
+      }
+      expect(tempo.height).toBeGreaterThanOrEqual(60);
+      // the bend buttons sit left of the tempo fader, the clock above the transport
+      expect(bend.x + bend.width).toBeLessThanOrEqual(tempo.x);
+      expect(time.y + time.height).toBeLessThanOrEqual(play.y);
+    }
+  });
+}
+
+test('tempo and keylock survive loading the next track', async ({ page }) => {
+  const a = deck(page, 'a');
+  await a.getByRole('button', { name: 'Demo-Track laden' }).click();
+  const tempo = a.getByRole('slider', { name: 'Tempo' });
+  await tempo.focus();
+  await page.keyboard.press('ArrowUp');
+  await a.getByRole('button', { name: 'Keylock' }).click();
+  await a.getByRole('button', { name: 'Deck 1 auswerfen' }).click();
+  await a.getByRole('button', { name: 'Demo-Track laden' }).click();
+  await expect(a.getByRole('slider', { name: 'Tempo' })).toHaveAttribute('aria-valuetext', '−0.40 %');
+  await expect(a.getByRole('button', { name: 'Keylock' })).toHaveAttribute('aria-pressed', 'true');
+});

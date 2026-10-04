@@ -3,6 +3,7 @@ import type { Deck } from '../ipc/types';
 import { loadIntoDeck, unloadDeck } from '../state/connect';
 import { useAppState } from '../state/store';
 import { TimeReadout } from './TimeReadout';
+import { TempoButtons, TempoFader } from './Tempo';
 import { Transport } from './Transport';
 import styles from './DeckPanel.module.css';
 
@@ -36,11 +37,17 @@ export function DeckPanel({ deck }: Props) {
 
       {info.status === 'ready' ? (
         <div className={styles.loaded}>
-          <h2 className={styles.title} title={info.title}>
-            {info.title}
-          </h2>
-          <TimeReadout deck={deck} />
-          <Transport deck={deck} />
+          <div className={styles.main}>
+            <h2 className={styles.title} title={info.title}>
+              {info.title}
+            </h2>
+            <TimeReadout deck={deck} />
+            <div className={styles.controls}>
+              <Transport deck={deck} />
+              <TempoButtons deck={deck} />
+            </div>
+          </div>
+          <TempoFader deck={deck} />
         </div>
       ) : (
         <div className={styles.empty} data-status={info.status}>

@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { DeckFrame } from '../ipc/types';
-import { MAX_EXTRAPOLATION_MS, formatRemaining, formatTime, positionAt } from './extrapolate';
+import {
+  MAX_EXTRAPOLATION_MS,
+  NEXT_RANGE,
+  faderToTempo,
+  formatRange,
+  formatRemaining,
+  formatTempo,
+  formatTime,
+  positionAt,
+  tempoToFader,
+} from './extrapolate';
 
 const deck = (over: Partial<DeckFrame> = {}): DeckFrame => ({
   trackId: 1,
@@ -10,6 +20,12 @@ const deck = (over: Partial<DeckFrame> = {}): DeckFrame => ({
   cue: 0,
   previewing: false,
   peak: [0, 0],
+  tempo: 0,
+  tempoRange: 'ten',
+  keylock: false,
+  rate: 1,
+  reverse: false,
+  scratching: false,
   ...over,
 });
 
@@ -23,7 +39,20 @@ describe('positionAt', () => {
   });
 
   it('honours the playback rate', () => {
-    expect(positionAt(deck(), 48_000, 1000, 1100, 2)).toBeCloseTo(48_000 + 9_600);
+    expect(positionAt(deck({ rate: 1.06 }), 48_000, 1000, 1100)).toBeCloseTo(48_000 + 5_088);
+  });
+
+  it('runs backwards in reverse and stops at the start', () => {
+    expect(positionAt(deck({ rate: -1 }), 48_000, 1000, 1100)).toBeCloseTo(48_000 - 4_800);
+    expect(positionAt(deck({ rate: -1, position: 100 }), 48_000, 1000, 1100)).toBe(0);
+  });
+
+  it('holds still while scratching with the platter held', () => {
+    expect(positionAt(deck({ rate: 0, scratching: true }), 48_000, 1000, 1100)).toBe(48_000);
+  });
+
+  it('survives a broken rate', () => {
+    expect(positionAt(deck({ rate: Number.NaN }), 48_000, 1000, 1100)).toBe(48_000);
   });
 
   it('never runs past the end', () => {
@@ -38,6 +67,50 @@ describe('positionAt', () => {
 
   it('ignores clock skew backwards', () => {
     expect(positionAt(deck(), 48_000, 1000, 900)).toBe(48_000);
+  });
+});
+
+describe('formatTempo', () => {
+  it('shows the change in percent of the current range', () => {
+    expect(formatTempo(0, 'ten')).toBe('0.00 %');
+    expect(formatTempo(1, 'ten')).toBe('+10.00 %');
+    expect(formatTempo(-1, 'sixteen')).toBe('−16.00 %');
+    expect(formatTempo(0.25, 'six')).toBe('+1.50 %');
+    expect(formatTempo(-0.5, 'wide')).toBe('−25.00 %');
+  });
+
+  it('never shows a negative zero and clamps bad input', () => {
+    expect(formatTempo(-0.00001, 'ten')).toBe('0.00 %');
+    expect(formatTempo(Number.NaN, 'ten')).toBe('0.00 %');
+    expect(formatTempo(7, 'six')).toBe('+6.00 %');
+  });
+});
+
+describe('tempo fader', () => {
+  it('puts slower at the top, as on the controller', () => {
+    expect(faderToTempo(1)).toBe(-1);
+    expect(faderToTempo(0)).toBe(1);
+    expect(faderToTempo(0.5)).toBe(0);
+    expect(tempoToFader(-1)).toBe(1);
+  });
+
+  it('round-trips and clamps', () => {
+    for (const t of [-1, -0.37, 0, 0.5, 1]) expect(faderToTempo(tempoToFader(t))).toBeCloseTo(t);
+    expect(tempoToFader(Number.NaN)).toBe(0.5);
+    expect(faderToTempo(3)).toBe(-1);
+  });
+});
+
+describe('tempo ranges', () => {
+  it('cycle like Shift + Sync on the controller', () => {
+    expect([NEXT_RANGE.six, NEXT_RANGE.ten, NEXT_RANGE.sixteen, NEXT_RANGE.wide]).toEqual([
+      'ten',
+      'sixteen',
+      'wide',
+      'six',
+    ]);
+    expect(formatRange('sixteen')).toBe('±16 %');
+    expect(formatRange('wide')).toBe('WIDE');
   });
 });
 

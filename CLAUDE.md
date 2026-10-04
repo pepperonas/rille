@@ -77,6 +77,18 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - cpal ruft den Fehler-Callback teils auf dem **Render-Thread** auf und meldet jede
   CoreAudio-Überlastung als `ErrorKind::Xrun` – dort nur Atomics anfassen
   (`StreamStats::record_error`), Überlastungen zählen statt den Stream neu aufzubauen.
+- **Signalsmith Stretch braucht beim `seek` einen ganzen Analyseblock Vorlauf**
+  (≈ `input_latency × 2` Frames), nicht nur einen Audioblock. Mit zu kurzem Vorlauf lag nach
+  jedem Cue-Sprung ~30 ms Stille *hinter* der Varispeed-Brücke. Eigener Puffer `preroll`, in
+  `Player::new` alloziert. Tests zu Lücken müssen länger rendern als Brücke + Überblendung
+  (`output_latency + 256` Frames) – der erste Test mit 50 ms war dafür blind.
+- `assert_no_alloc` sieht C++ nicht. Signalsmith wird über den macOS-`malloc_logger`-Haken
+  geprüft (`tests/stretch_alloc.rs`); bei einem Update der Crate diesen Test zuerst laufen lassen.
+- `JOG_TICKS_PER_REV` (player.rs) ist eine Annahme und wird bei der Hardware-Abnahme kalibriert:
+  eine Tellerumdrehung muss so weit spulen wie eine Umdrehung einer Platte bei 33⅓ U/min.
+- Tempo-Fader: in der App ist der Fader-Wert oben = 1 (wie alle Fader), Tempo oben = −1
+  (langsamer, wie aufgedruckt). Umrechnung nur über `faderToTempo`/`tempoToFader`
+  (`src/state/extrapolate.ts`) bzw. `tempo_to_fader` (dto.rs) – sonst kippt die Richtung.
 
 ## Doku, Badges, Screenshots
 - README ist zweisprachig: `README.md` (Englisch, vollständige Badge-Liste) und `README.de.md`.

@@ -19,7 +19,18 @@ export interface DeckFrame {
   cue: number;
   previewing: boolean;
   peak: [number, number];
+  /** Tempo fader, -1 (top, slower) … +1 (bottom, faster). */
+  tempo: number;
+  tempoRange: TempoRange;
+  keylock: boolean;
+  /** Effective playback rate: 1 normal, negative backwards, 0 held still. */
+  rate: number;
+  reverse: boolean;
+  scratching: boolean;
 }
+
+/** Tempo fader range: ±6 %, ±10 %, ±16 % or wide (±50 %). */
+export type TempoRange = 'six' | 'ten' | 'sixteen' | 'wide';
 
 export interface StateFrame {
   frameClock: number;
@@ -84,7 +95,15 @@ export type DeckAction =
   | { type: 'jumpToStart' }
   | { type: 'jumpToCue' }
   | { type: 'seek'; frame: number }
-  | { type: 'unload' };
+  | { type: 'unload' }
+  | { type: 'tempo'; value: number }
+  | { type: 'tempoRange'; range: TempoRange }
+  | { type: 'cycleTempoRange' }
+  | { type: 'keylock'; on: boolean }
+  /** Pitch bend held from the app: -1 slower, 0 release, +1 faster. */
+  | { type: 'bend'; direction: -1 | 0 | 1 }
+  /** Plays backwards while held. */
+  | { type: 'reverse'; on: boolean };
 
 export type MixerAction =
   | { type: 'channelFader'; deck: Deck; value: number }

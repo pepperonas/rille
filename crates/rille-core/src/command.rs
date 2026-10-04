@@ -47,8 +47,57 @@ impl TransitionKind {
     }
 }
 
+/// Range of the tempo fader.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TempoRange {
+    Six,
+    #[default]
+    Ten,
+    Sixteen,
+    /// ±50 %.
+    Wide,
+}
+
+impl TempoRange {
+    pub const ALL: [TempoRange; 4] = [
+        TempoRange::Six,
+        TempoRange::Ten,
+        TempoRange::Sixteen,
+        TempoRange::Wide,
+    ];
+
+    /// Largest rate deviation, e.g. 0.10 for ±10 %.
+    pub const fn span(self) -> f32 {
+        match self {
+            TempoRange::Six => 0.06,
+            TempoRange::Ten => 0.10,
+            TempoRange::Sixteen => 0.16,
+            TempoRange::Wide => 0.50,
+        }
+    }
+
+    pub const fn next(self) -> TempoRange {
+        match self {
+            TempoRange::Six => TempoRange::Ten,
+            TempoRange::Ten => TempoRange::Sixteen,
+            TempoRange::Sixteen => TempoRange::Wide,
+            TempoRange::Wide => TempoRange::Six,
+        }
+    }
+
+    /// Playback rate for a fader position (-1.0 = top, slowest … +1.0 = bottom, fastest).
+    pub fn rate(self, position: f32) -> f32 {
+        let p = if position.is_finite() {
+            position.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        1.0 + p * self.span()
+    }
+}
+
 /// Transport and cue actions of one deck.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DeckCommand {
     PlayPause,
     Play,
@@ -65,6 +114,24 @@ pub enum DeckCommand {
         frame: u64,
     },
     Unload,
+    /// Tempo fader position, -1.0 (top, slowest) ..= +1.0 (bottom, fastest).
+    Tempo(f32),
+    TempoRange(TempoRange),
+    CycleTempoRange,
+    /// Keep the pitch when the tempo changes.
+    Keylock(bool),
+    /// Jog rim turned: temporary rate change proportional to the turning speed.
+    Bend(i32),
+    /// Held bend from the app's buttons: -1 slower, 0 off, +1 faster.
+    BendHold(i8),
+    /// Jog platter touched (vinyl mode): the platter now drives the playhead.
+    ScratchTouch(bool),
+    /// Jog platter turned while touched.
+    Scratch(i32),
+    /// Fast search (shift + platter): ticks move the playhead.
+    Search(i32),
+    /// Play backwards while held.
+    Reverse(bool),
 }
 
 /// Mixer parameters. Levels are normalised to `0.0..=1.0`.
@@ -100,6 +167,33 @@ pub enum Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tempo_ranges_map_the_fader() {
+        assert_eq!(TempoRange::Ten.rate(0.0), 1.0);
+        assert!(
+            (TempoRange::Ten.rate(-1.0) - 0.9).abs() < 1e-6,
+            "top is slower"
+        );
+        assert!((TempoRange::Sixteen.rate(1.0) - 1.16).abs() < 1e-6);
+        assert!((TempoRange::Wide.rate(-1.0) - 0.5).abs() < 1e-6);
+        assert_eq!(TempoRange::Six.rate(f32::NAN), 1.0);
+        assert_eq!(TempoRange::Six.rate(7.0), TempoRange::Six.rate(1.0));
+    }
+
+    #[test]
+    fn tempo_ranges_cycle_through_all() {
+        let mut r = TempoRange::Six;
+        for expected in [
+            TempoRange::Ten,
+            TempoRange::Sixteen,
+            TempoRange::Wide,
+            TempoRange::Six,
+        ] {
+            r = r.next();
+            assert_eq!(r, expected);
+        }
+    }
 
     #[test]
     fn transition_kinds_cycle() {

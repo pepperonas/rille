@@ -2,7 +2,8 @@
 //! types so the engine never depends on serde or Tauri.
 
 use rille_core::{
-    CrossfaderCurve, DeckCommand, DeckId, EqBand, MixerCommand, Snapshot, TransitionKind,
+    CrossfaderCurve, DeckCommand, DeckId, EqBand, MixerCommand, Snapshot, TempoRange,
+    TransitionKind,
 };
 use rille_engine::output::DeviceInfo;
 use serde::{Deserialize, Serialize};
@@ -78,6 +79,38 @@ impl From<Band> for EqBand {
     }
 }
 
+/// Tempo fader range: ±6 %, ±10 %, ±16 % or wide (±50 %).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Range {
+    Six,
+    Ten,
+    Sixteen,
+    Wide,
+}
+
+impl From<Range> for TempoRange {
+    fn from(r: Range) -> TempoRange {
+        match r {
+            Range::Six => TempoRange::Six,
+            Range::Ten => TempoRange::Ten,
+            Range::Sixteen => TempoRange::Sixteen,
+            Range::Wide => TempoRange::Wide,
+        }
+    }
+}
+
+impl From<TempoRange> for Range {
+    fn from(r: TempoRange) -> Range {
+        match r {
+            TempoRange::Six => Range::Six,
+            TempoRange::Ten => Range::Ten,
+            TempoRange::Sixteen => Range::Sixteen,
+            TempoRange::Wide => Range::Wide,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Transition {
@@ -94,7 +127,7 @@ impl From<TransitionKind> for Transition {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum DeckAction {
     PlayPause,
@@ -104,8 +137,52 @@ pub enum DeckAction {
     CueRelease,
     JumpToStart,
     JumpToCue,
-    Seek { frame: u64 },
+    Seek {
+        frame: u64,
+    },
     Unload,
+    /// Tempo fader, -1.0 (top, slower) ..= +1.0 (bottom, faster).
+    Tempo {
+        value: f32,
+    },
+    TempoRange {
+        range: Range,
+    },
+    CycleTempoRange,
+    Keylock {
+        on: bool,
+    },
+    /// Pitch bend held from the app: -1 slower, 0 release, +1 faster.
+    Bend {
+        direction: i8,
+    },
+    /// Plays backwards while held.
+    Reverse {
+        on: bool,
+    },
+}
+
+impl DeckAction {
+    /// The controller element this action also exists on, with its value in hardware space.
+    pub fn takeover(&self, deck: Deck) -> Option<(rille_midi::TakeoverKey, f32)> {
+        use rille_midi::ddj200::{Control, Scope};
+        match *self {
+            DeckAction::Tempo { value } => Some((
+                (Scope::Deck(deck.into()), Control::TempoFader),
+                tempo_to_fader(value),
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// Tempo -1..+1 → fader position 0..1 (0 = top), the inverse of the controller mapping.
+pub fn tempo_to_fader(tempo: f32) -> f32 {
+    if tempo.is_finite() {
+        (tempo.clamp(-1.0, 1.0) + 1.0) / 2.0
+    } else {
+        0.5
+    }
 }
 
 impl From<DeckAction> for DeckCommand {
@@ -120,6 +197,12 @@ impl From<DeckAction> for DeckCommand {
             DeckAction::JumpToCue => DeckCommand::JumpToCue,
             DeckAction::Seek { frame } => DeckCommand::Seek { frame },
             DeckAction::Unload => DeckCommand::Unload,
+            DeckAction::Tempo { value } => DeckCommand::Tempo(value),
+            DeckAction::TempoRange { range } => DeckCommand::TempoRange(range.into()),
+            DeckAction::CycleTempoRange => DeckCommand::CycleTempoRange,
+            DeckAction::Keylock { on } => DeckCommand::Keylock(on),
+            DeckAction::Bend { direction } => DeckCommand::BendHold(direction.signum()),
+            DeckAction::Reverse { on } => DeckCommand::Reverse(on),
         }
     }
 }
@@ -199,6 +282,14 @@ pub struct DeckFrame {
     pub cue: u64,
     pub previewing: bool,
     pub peak: [f32; 2],
+    /// Tempo fader, -1..+1.
+    pub tempo: f32,
+    pub tempo_range: Range,
+    pub keylock: bool,
+    /// Effective playback rate (1.0 = normal, negative = backwards, 0 = held still).
+    pub rate: f32,
+    pub reverse: bool,
+    pub scratching: bool,
 }
 
 /// One state update, sent at most 60 times per second.
@@ -241,6 +332,12 @@ impl StateFrame {
             cue: d.cue,
             previewing: d.previewing,
             peak: d.peak,
+            tempo: d.tempo,
+            tempo_range: d.tempo_range.into(),
+            keylock: d.keylock,
+            rate: d.rate,
+            reverse: d.reverse,
+            scratching: d.scratching,
         };
         StateFrame {
             frame_clock: s.frame_clock,
@@ -335,6 +432,46 @@ mod tests {
         assert_eq!(DeckCommand::from(a), DeckCommand::CuePress);
         let a: DeckAction = serde_json::from_str(r#"{"type":"seek","frame":42}"#).unwrap();
         assert_eq!(DeckCommand::from(a), DeckCommand::Seek { frame: 42 });
+        let a: DeckAction = serde_json::from_str(r#"{"type":"tempo","value":-0.5}"#).unwrap();
+        assert_eq!(DeckCommand::from(a), DeckCommand::Tempo(-0.5));
+        let a: DeckAction =
+            serde_json::from_str(r#"{"type":"tempoRange","range":"wide"}"#).unwrap();
+        assert_eq!(
+            DeckCommand::from(a),
+            DeckCommand::TempoRange(TempoRange::Wide)
+        );
+        let a: DeckAction = serde_json::from_str(r#"{"type":"keylock","on":true}"#).unwrap();
+        assert_eq!(DeckCommand::from(a), DeckCommand::Keylock(true));
+        let a: DeckAction = serde_json::from_str(r#"{"type":"bend","direction":-7}"#).unwrap();
+        assert_eq!(
+            DeckCommand::from(a),
+            DeckCommand::BendHold(-1),
+            "clamped to a direction"
+        );
+        let a: DeckAction = serde_json::from_str(r#"{"type":"reverse","on":true}"#).unwrap();
+        assert_eq!(DeckCommand::from(a), DeckCommand::Reverse(true));
+    }
+
+    #[test]
+    fn app_tempo_moves_are_reported_for_takeover_in_hardware_orientation() {
+        use rille_midi::ddj200::{Control, Scope};
+        let key = (Scope::Deck(DeckId::B), Control::TempoFader);
+        assert_eq!(
+            DeckAction::Tempo { value: -1.0 }.takeover(Deck::B),
+            Some((key, 0.0)),
+            "top of the fader = slowest"
+        );
+        assert_eq!(
+            DeckAction::Tempo { value: 1.0 }.takeover(Deck::B),
+            Some((key, 1.0))
+        );
+        assert_eq!(DeckAction::Play.takeover(Deck::A), None);
+        // the controller mapping inverts this exactly
+        for t in [-1.0, -0.3, 0.0, 0.7, 1.0] {
+            let back = rille_midi::ddj200::tempo_from_fader(tempo_to_fader(t));
+            assert!((back - t).abs() < 1e-6);
+        }
+        assert_eq!(tempo_to_fader(f32::NAN), 0.5);
     }
 
     #[test]

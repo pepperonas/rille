@@ -60,11 +60,21 @@ pub fn deck_load_file(
 }
 
 #[tauri::command]
-pub fn deck_command(deck: Deck, action: DeckAction, audio: State<'_, AudioService>) {
+pub fn deck_command(
+    deck: Deck,
+    action: DeckAction,
+    audio: State<'_, AudioService>,
+    app: tauri::AppHandle,
+) {
     match action {
         // Unloading also cancels a load that is still decoding.
         DeckAction::Unload => audio.unload(deck.into()),
         _ => audio.send(Command::Deck(deck.into(), action.into())),
+    }
+    if let (Some(controller), Some((key, value))) =
+        (app.try_state::<ControllerService>(), action.takeover(deck))
+    {
+        controller.software_changed(key, value);
     }
 }
 

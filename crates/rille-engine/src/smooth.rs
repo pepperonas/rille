@@ -12,16 +12,24 @@ pub struct Smoother {
 impl Smoother {
     /// `time_ms` is the time constant τ: after τ the value has covered ~63 % of a step.
     pub fn new(sample_rate: u32, time_ms: f32, initial: f32) -> Smoother {
-        let samples = (time_ms / 1000.0) * sample_rate as f32;
-        let coeff = if samples <= 1.0 {
-            1.0
-        } else {
-            1.0 - (-1.0 / samples).exp()
-        };
         Smoother {
             current: initial,
             target: initial,
-            coeff,
+            coeff: Self::coefficient(sample_rate, time_ms),
+        }
+    }
+
+    /// Change the time constant (e.g. fast while scratching, slower for tempo moves).
+    pub fn set_time(&mut self, sample_rate: u32, time_ms: f32) {
+        self.coeff = Self::coefficient(sample_rate, time_ms);
+    }
+
+    fn coefficient(sample_rate: u32, time_ms: f32) -> f32 {
+        let samples = (time_ms / 1000.0) * sample_rate as f32;
+        if samples <= 1.0 {
+            1.0
+        } else {
+            1.0 - (-1.0 / samples).exp()
         }
     }
 
