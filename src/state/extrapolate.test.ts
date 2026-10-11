@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { DeckFrame } from '../ipc/types';
 import {
+  endingSoon,
   MAX_EXTRAPOLATION_MS,
   NEXT_RANGE,
   faderToTempo,
@@ -135,5 +136,34 @@ describe('formatRemaining', () => {
 
   it('rounds up so the last tenth is still shown', () => {
     expect(formatRemaining(48_000 * 90 - 10, 48_000 * 90, 48_000)).toBe('−0:00.1');
+  });
+});
+
+describe('endingSoon', () => {
+  const base = {
+    trackId: 1,
+    position: 0,
+    frames: 48_000 * 200,
+    playing: true,
+    cue: 0,
+    previewing: false,
+    peak: [0, 0] as [number, number],
+    tempo: 0,
+    tempoRange: 'ten' as const,
+    keylock: false,
+    rate: 1,
+    reverse: false,
+    scratching: false,
+  };
+  it('warns in the last 30 s of a playing deck, measured at its speed', () => {
+    expect(endingSoon(base, 48_000 * 171, 48_000)).toBe(true);
+    expect(endingSoon(base, 48_000 * 169, 48_000)).toBe(false);
+    // At half speed 40 s of track take 80 s: no hurry yet.
+    expect(endingSoon({ ...base, rate: 0.5 }, 48_000 * 160, 48_000)).toBe(false);
+  });
+  it('stays calm when paused, backwards or empty', () => {
+    expect(endingSoon({ ...base, playing: false }, 48_000 * 199, 48_000)).toBe(false);
+    expect(endingSoon({ ...base, rate: -1 }, 48_000 * 199, 48_000)).toBe(false);
+    expect(endingSoon({ ...base, frames: 0 }, 0, 48_000)).toBe(false);
   });
 });

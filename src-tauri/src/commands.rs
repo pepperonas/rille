@@ -53,7 +53,9 @@ pub fn audio_open(
     audio.open(request).map_err(|e| e.to_string())
 }
 
-#[tauri::command]
+/// Async: adding the file to the library reads its tags and touches the database, which must
+/// not stall the main thread.
+#[tauri::command(async)]
 pub fn deck_load_file(
     deck: Deck,
     path: PathBuf,

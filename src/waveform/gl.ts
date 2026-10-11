@@ -27,6 +27,7 @@ uniform float u_binRate;      // bins per second at this level
 uniform int u_bins;           // bins at this level
 uniform vec3 u_low, u_mid, u_high, u_grid;
 uniform float u_bpm, u_firstBeat; // bpm 0 = no grid
+uniform float u_duration;         // seconds; no grid outside the track
 out vec4 color;
 
 vec3 bins(float from, float to) {
@@ -47,12 +48,13 @@ void main() {
   float t = u_center + (x - u_size.x * 0.5) * u_spp;
   vec3 v = bins(t, t + u_spp);
   float a = abs(gl_FragCoord.y - u_size.y * 0.5) / (u_size.y * 0.5);
+  // Premultiplied colour throughout.
   vec4 c = vec4(0.0);
   if (a <= v.r) c = vec4(u_low, 1.0);
   if (a <= v.g * 0.8) c = vec4(u_mid, 1.0);
   if (a <= v.b * 0.55) c = vec4(u_high, 1.0);
-  // Beatgrid: a line on every beat, stronger on every fourth.
-  if (u_bpm > 0.0) {
+  // Beatgrid: a line on every beat, stronger on every fourth, only within the track.
+  if (u_bpm > 0.0 && t >= 0.0 && t <= u_duration) {
     float period = 60.0 / u_bpm;
     float n = (t - u_firstBeat) / period;
     float dist = abs(fract(n + 0.5) - 0.5) * period / u_spp;
@@ -60,16 +62,18 @@ void main() {
     bool down = mod(beat, 4.0) == 0.0;
     if (dist < (down ? 1.5 : 0.75)) {
       float g = down ? 0.9 : 0.45;
-      c = vec4(mix(c.rgb, u_grid, g), max(c.a, g));
+      c = vec4(u_grid * g, g) + c * (1.0 - g);
     }
   }
   // The past is dimmed.
-  if (x < u_size.x * 0.5) c.a *= 0.5;
-  color = vec4(c.rgb * c.a, c.a);
+  if (x < u_size.x * 0.5) c *= 0.5;
+  color = c;
 }`;
 
 export interface DetailFrame {
   center: number;
+  /** Track length in seconds (the grid stops there). */
+  duration: number;
   secondsVisible: number;
   bpm: number;
   firstBeat: number;
@@ -82,13 +86,41 @@ export class DetailRenderer {
   private peaks: Peaks | null = null;
   private loc: Record<string, WebGLUniformLocation | null> = {};
   private colors: WaveColors | null = null;
+  private lost = false;
+  private readonly onLost = (e: Event) => {
+    e.preventDefault(); // ask for the context back
+    this.lost = true;
+  };
+  private readonly onRestored = () => {
+    try {
+      this.init();
+      this.lost = false;
+      this.setPeaks(this.peaks);
+      this.restored();
+    } catch (e) {
+      console.warn('waveform context not restored', e);
+    }
+  };
 
-  /** Throws when WebGL2 is unavailable or the shader does not compile. */
-  constructor(private canvas: HTMLCanvasElement) {
+  /** Throws when WebGL2 is unavailable or the shader does not compile. `restored` is called
+   *  after the GPU context came back (sleep, GPU switch) so the owner can redraw. */
+  constructor(
+    private canvas: HTMLCanvasElement,
+    private restored: () => void = () => {},
+  ) {
     const gl = canvas.getContext('webgl2', { premultipliedAlpha: true, antialias: false });
     if (!gl) throw new Error('WebGL2 nicht verfügbar');
     this.gl = gl;
+    this.program = this.init();
+    canvas.addEventListener('webglcontextlost', this.onLost);
+    canvas.addEventListener('webglcontextrestored', this.onRestored);
+  }
+
+  /** Compile the program and look up its uniforms (again after a context loss). */
+  private init(): WebGLProgram {
+    const gl = this.gl;
     this.program = link(gl, VERTEX, FRAGMENT);
+    this.textures = [];
     for (const name of [
       'u_peaks',
       'u_size',
@@ -102,9 +134,11 @@ export class DetailRenderer {
       'u_grid',
       'u_bpm',
       'u_firstBeat',
+      'u_duration',
     ]) {
       this.loc[name] = gl.getUniformLocation(this.program, name);
     }
+    return this.program;
   }
 
   setColors(colors: WaveColors) {
@@ -117,7 +151,7 @@ export class DetailRenderer {
     this.textures.forEach((t) => gl.deleteTexture(t));
     this.textures = [];
     this.peaks = peaks;
-    if (!peaks) return;
+    if (!peaks || this.lost) return;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     for (const level of peaks.levels) {
       const bins = level.length / BANDS;
@@ -135,6 +169,7 @@ export class DetailRenderer {
 
   draw(f: DetailFrame) {
     const { gl, canvas, peaks, colors } = this;
+    if (this.lost) return;
     gl.viewport(0, 0, canvas.width, canvas.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
@@ -159,14 +194,20 @@ export class DetailRenderer {
     gl.uniform3f(this.loc.u_grid ?? null, ...rgb(colors.grid));
     gl.uniform1f(this.loc.u_bpm ?? null, f.bpm > 0 ? f.bpm : 0);
     gl.uniform1f(this.loc.u_firstBeat ?? null, f.firstBeat);
+    gl.uniform1f(this.loc.u_duration ?? null, f.duration);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
+  /** Free the GPU context right away: a deck change mounts a new renderer, and browsers
+   *  only allow a handful of live contexts. */
   dispose() {
+    this.canvas.removeEventListener('webglcontextlost', this.onLost);
+    this.canvas.removeEventListener('webglcontextrestored', this.onRestored);
     this.textures.forEach((t) => this.gl.deleteTexture(t));
     this.gl.deleteProgram(this.program);
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
   }
 }
 

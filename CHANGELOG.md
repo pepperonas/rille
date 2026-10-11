@@ -58,6 +58,15 @@ All notable changes to rille are documented here. The format follows
 - Track loading no longer decodes the whole file first (was ~360 ms for a 3:43 MP3).
 
 ### Fixed
+- Waveforms (review of M6): a trackpad swipe zooms step by step instead of racing to the end;
+  a track without a waveform says why (analysis failed, no library) instead of "wird
+  berechnet" forever; a file changed on disk and loaded again gets a fresh analysis; peaks that
+  cannot be saved mark the analysis failed instead of re-running it forever; the GPU context
+  survives sleep / GPU switches and is released on every track change; loading from the Finder
+  no longer blocks the window; beat lines have their intended strength and stop at the track
+  ends; moving the window to a screen with another pixel density re-renders sharply; the
+  remaining-time warning only fires while the deck plays (at its real speed) and frames the
+  overview; the overview is a keyboard-operable slider and never seeks onto the last frame.
 - Library (review of M5): rows delivered by events are no longer overwritten by a slower
   initial fetch; Enter and the controller load only a track the filter shows; a file changed
   during its own analysis is analysed again instead of keeping the stale result; a failed

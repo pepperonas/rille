@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 const deck = (page: Page, d: 'a' | 'b') => page.locator(`section[data-deck='${d}']`);
 const detail = (page: Page, d: 'a' | 'b') =>
-  deck(page, d).getByRole('img', { name: /^Waveform Deck/ });
+  deck(page, d).getByRole('group', { name: /^Waveform Deck/ });
 const draws = (page: Page) =>
   page.evaluate(() => (window as { __rilleWaveDraws?: number }).__rilleWaveDraws ?? 0);
 
@@ -25,7 +25,10 @@ test.afterEach(() => {
 test('both decks show detail and overview once the peaks arrive', async ({ page }) => {
   for (const d of ['a', 'b'] as const) {
     await expect(detail(page, d)).toHaveAttribute('data-peaks', 'ready');
-    await expect(deck(page, d).locator('[data-peaks="ready"]')).toHaveCount(2);
+    await expect(deck(page, d).getByRole('slider', { name: /^Position/ })).toHaveAttribute(
+      'data-peaks',
+      'ready',
+    );
   }
   // The WebGL canvas really drew something: compare its pixels with the empty background.
   // (A WebGL canvas cannot be read back after compositing, so go through a screenshot.)
@@ -84,6 +87,24 @@ test('a click into the overview seeks there', async ({ page }) => {
   await expect(a.getByLabel('Gespielt')).toHaveText(/^0:5[1-3]\.\d$/);
 });
 
+test('the overview is a keyboard seek control too', async ({ page }) => {
+  const a = deck(page, 'a');
+  await a.getByRole('button', { name: 'Pause' }).click();
+  const overview = a.getByRole('slider', { name: 'Position Deck 1' });
+  await overview.focus();
+  await page.keyboard.press('Home');
+  await expect(a.getByLabel('Gespielt')).toHaveText('0:00.0');
+  await page.keyboard.press('ArrowRight');
+  await expect(a.getByLabel('Gespielt')).toHaveText('0:05.0');
+  await page.keyboard.press('Shift+ArrowRight');
+  await expect(a.getByLabel('Gespielt')).toHaveText('0:55.0');
+  await expect(overview).toHaveAttribute('aria-valuenow', '55');
+  // End stops one frame short, so the track does not end on the spot.
+  await page.keyboard.press('End');
+  await expect(a.getByRole('button', { name: 'Play' })).toBeEnabled();
+  await expect(a.getByLabel('Restzeit')).toHaveText('−0:00.1');
+});
+
 test('the mouse wheel and +/− zoom the detail view, shared by both decks', async ({ page }) => {
   const a = detail(page, 'a');
   await expect(a).toHaveAttribute('aria-label', /8 Sekunden/);
@@ -111,6 +132,12 @@ test('the remaining time warns in the last 30 seconds', async ({ page }) => {
   ).toHaveAttribute('data-warn', 'false');
   const animation = await remaining.evaluate((el) => getComputedStyle(el).animationName);
   expect(animation).not.toBe('none');
+  // The overview of that deck carries a red frame, deck 1 does not.
+  await expect(deck(page, 'b')).toHaveAttribute('data-warn', 'true');
+  await expect(deck(page, 'a')).toHaveAttribute('data-warn', 'false');
+  // Paused, it is no emergency.
+  await deck(page, 'b').getByRole('button', { name: 'Pause' }).click();
+  await expect(deck(page, 'b')).toHaveAttribute('data-warn', 'false');
 });
 
 test('reduced motion keeps the warning colour but stops the blinking', async ({ browser }) => {

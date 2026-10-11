@@ -72,3 +72,14 @@ export function formatRemaining(position: number, frames: number, sampleRate: nu
   const tenths = Math.ceil((left / sampleRate) * 10);
   return `−${formatTime((tenths / 10) * sampleRate + 0.5, sampleRate)}`;
 }
+
+/** Seconds before the end at which the remaining time turns into a warning. */
+export const WARN_SECONDS = 30;
+
+/** Time to act: the deck plays, and at its current speed it ends within `WARN_SECONDS`. A
+ *  stopped deck, or one playing backwards, is no emergency. */
+export function endingSoon(deck: DeckFrame, position: number, sampleRate: number): boolean {
+  if (!deck.playing || sampleRate <= 0 || deck.frames <= 0 || !(deck.rate > 0)) return false;
+  const left = (deck.frames - position) / sampleRate / deck.rate;
+  return left < WARN_SECONDS;
+}

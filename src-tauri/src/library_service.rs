@@ -58,6 +58,8 @@ pub struct LibraryTrack {
     pub first_beat: Option<f64>,
     pub analysis: Analysis,
     pub error: Option<String>,
+    /// Changes with every finished analysis; cached peaks are only valid for one revision.
+    pub analysis_rev: i64,
 }
 
 impl From<TrackRow> for LibraryTrack {
@@ -73,6 +75,7 @@ impl From<TrackRow> for LibraryTrack {
             first_beat: t.grid.map(|g| g.first_beat),
             analysis: t.analysis.into(),
             error: t.error,
+            analysis_rev: t.analysis_rev,
         }
     }
 }
@@ -302,15 +305,11 @@ impl LibraryService {
     /// Finder is added) and that its analysis runs next, because the deck waits for its
     /// waveform. `None` if the file cannot even be stat'ed or the database fails.
     pub fn ensure(&self, path: &Path) -> Option<LoadInfo> {
-        let existing = lock(&self.shared.db).track_by_path(path).ok().flatten();
-        let row = match existing {
-            Some(row) => row,
-            None => {
-                let (track, _) = self.add_file(path)?;
-                self.post_tracks(vec![track.clone()]);
-                lock(&self.shared.db).track(track.id).ok()??
-            }
-        };
+        // Through the import path: a changed file (size, mtime) is analysed again and a failed
+        // one gets another try, instead of the deck getting a stale grid and waveform.
+        let (track, _) = self.add_file(path)?;
+        self.post_tracks(vec![track.clone()]);
+        let row = self.row(track.id)?;
         self.prioritize(&row);
         Some(LoadInfo::from(&row))
     }
@@ -560,10 +559,20 @@ impl LibraryService {
         let db_result = match result {
             Ok(Ok(analysis)) => {
                 let peaks = analysis.peaks.to_bytes();
-                if let Err(e) = write_atomically(&self.peaks_path(id), &peaks) {
-                    tracing::warn!(%e, "could not write peaks");
+                match write_atomically(&self.peaks_path(id), &peaks) {
+                    Ok(()) => lock(&self.shared.db).set_analyzed(
+                        id,
+                        analysis.grid,
+                        analysis.duration_secs,
+                    ),
+                    // Marked failed, not done: a "done" track without peaks would be queued
+                    // again by `peaks()` forever (disk full, cache folder not writable).
+                    Err(e) => {
+                        tracing::warn!(%e, "could not write peaks");
+                        lock(&self.shared.db)
+                            .set_failed(id, &format!("Waveform nicht gespeichert: {e}"))
+                    }
                 }
-                lock(&self.shared.db).set_analyzed(id, analysis.grid, analysis.duration_secs)
             }
             Ok(Err(e)) => {
                 if self.shared.stopping.load(Ordering::Relaxed) {
@@ -879,6 +888,50 @@ mod tests {
         );
         wait_idle(&rx);
         assert!(service.peaks(info.id).is_ok());
+        service.stop();
+    }
+
+    #[test]
+    fn loading_a_changed_file_drops_its_old_analysis() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Edit.wav");
+        write_kicks(&file, 8.0);
+        let (service, rx, _) = start(dir.path());
+        let first = service.ensure(&file).unwrap();
+        wait_idle(&rx);
+        let rev = service.row(first.id).unwrap().analysis_rev;
+        // Re-exported under the same name: longer, so size and mtime differ.
+        write_kicks(&file, 10.0);
+        let again = service.ensure(&file).unwrap();
+        assert_eq!(again.id, first.id);
+        assert_eq!(again.bpm, None, "old tempo must not come along");
+        wait_idle(&rx);
+        let row = service.row(first.id).unwrap();
+        assert_eq!(row.analysis, AnalysisState::Done);
+        assert!(row.analysis_rev > rev);
+        service.stop();
+    }
+
+    #[test]
+    fn peaks_that_cannot_be_saved_fail_instead_of_looping() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Track.wav");
+        write_kicks(&file, 8.0);
+        let (service, rx, _) = start(dir.path());
+        // The cache folder turned into a file: nothing can be written there.
+        std::fs::remove_dir_all(dir.path().join("peaks")).unwrap();
+        std::fs::write(dir.path().join("peaks"), b"x").unwrap();
+        let info = service.ensure(&file).unwrap();
+        wait_idle(&rx);
+        let row = service.row(info.id).unwrap();
+        assert_eq!(row.analysis, AnalysisState::Failed);
+        assert!(row.error.unwrap().contains("Waveform"));
+        // Asking for the peaks does not start the analysis again.
+        assert!(service.peaks(info.id).is_err());
+        assert_eq!(
+            service.row(info.id).unwrap().analysis,
+            AnalysisState::Failed
+        );
         service.stop();
     }
 

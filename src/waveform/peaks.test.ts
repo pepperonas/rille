@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   beatsIn,
   columnMax,
+  seekTarget,
   binCount,
   binRate,
   chooseLevel,
@@ -133,5 +134,16 @@ describe('columnMax', () => {
     expect(out).toEqual([1, 2, 3]);
     columnMax(p, 0, 5, 6, out);
     expect(out).toEqual([0, 0, 0]);
+  });
+});
+
+describe('seekTarget', () => {
+  it('maps a fraction to a frame, short of the very end', () => {
+    expect(seekTarget(0.25, 1000)).toBe(250);
+    expect(seekTarget(1, 1000)).toBe(999);
+    expect(seekTarget(7, 1000)).toBe(999);
+    expect(seekTarget(-1, 1000)).toBe(0);
+    expect(seekTarget(NaN, 1000)).toBe(0);
+    expect(seekTarget(0.5, 0)).toBe(0);
   });
 });

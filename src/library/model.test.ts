@@ -28,6 +28,7 @@ function track(id: number, over: Partial<LibraryTrack> = {}): LibraryTrack {
     firstBeat: 0.1,
     analysis: 'done',
     error: null,
+    analysisRev: 1,
     ...over,
   };
 }

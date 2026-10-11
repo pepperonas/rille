@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::tags::TrackInfo;
 
 /// The schema this build writes.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -59,6 +59,8 @@ pub struct TrackRow {
     pub grid: Option<BeatGrid>,
     pub analysis: AnalysisState,
     pub error: Option<String>,
+    /// Number of finished analyses; changes whenever the peaks file is rewritten.
+    pub analysis_rev: i64,
 }
 
 /// What a file looks like on disk; a change means the analysis must run again.
@@ -88,7 +90,8 @@ pub struct Library {
     conn: Connection,
 }
 
-const COLUMNS: &str = "id, path, title, artist, album, duration, bpm, first_beat, analysis, error";
+const COLUMNS: &str =
+    "id, path, title, artist, album, duration, bpm, first_beat, analysis, error, analysis_rev";
 
 impl Library {
     pub fn open(path: &Path) -> Result<Library, DbError> {
@@ -142,6 +145,13 @@ impl Library {
                 CREATE INDEX tracks_analysis ON tracks (analysis);
                 CREATE TABLE roots (path TEXT PRIMARY KEY);
                 PRAGMA user_version = 1;",
+            )?;
+        }
+        if version < 2 {
+            // Counts analyses, so cached peaks can tell a re-analysis from the old result.
+            tx.execute_batch(
+                "ALTER TABLE tracks ADD COLUMN analysis_rev INTEGER NOT NULL DEFAULT 0;
+                PRAGMA user_version = 2;",
             )?;
         }
         tx.commit()?;
@@ -291,7 +301,7 @@ impl Library {
     ) -> Result<(), DbError> {
         self.conn.execute(
             "UPDATE tracks SET bpm = ?2, first_beat = ?3, duration = ?4, analysis = ?5,
-                 error = NULL
+                 error = NULL, analysis_rev = analysis_rev + 1
              WHERE id = ?1",
             params![
                 id,
@@ -337,6 +347,7 @@ fn row(r: &rusqlite::Row<'_>) -> rusqlite::Result<TrackRow> {
             .map(|(bpm, first_beat)| BeatGrid { bpm, first_beat }),
         analysis: AnalysisState::parse(&r.get::<_, String>(8)?),
         error: r.get(9)?,
+        analysis_rev: r.get(10)?,
     })
 }
 
@@ -363,6 +374,39 @@ mod tests {
         let lib = Library::open_in_memory().unwrap();
         assert_eq!(lib.schema_version().unwrap(), SCHEMA_VERSION);
         assert!(lib.tracks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_version_1_database_is_migrated_with_its_data() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("library.db");
+        {
+            // The v1 schema exactly as rille 0.1 (M5) wrote it.
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE tracks (
+                    id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, size INTEGER NOT NULL,
+                    mtime INTEGER NOT NULL, title TEXT NOT NULL, artist TEXT, album TEXT,
+                    duration REAL, bpm REAL, first_beat REAL,
+                    analysis TEXT NOT NULL DEFAULT 'pending', error TEXT,
+                    added_at INTEGER NOT NULL DEFAULT (unixepoch()));
+                CREATE INDEX tracks_analysis ON tracks (analysis);
+                CREATE TABLE roots (path TEXT PRIMARY KEY);
+                INSERT INTO tracks (path, size, mtime, title, bpm, first_beat, analysis)
+                    VALUES ('/m/a.mp3', 1, 2, 'A', 128.0, 0.1, 'done');
+                PRAGMA user_version = 1;",
+            )
+            .unwrap();
+        }
+        let lib = Library::open(&path).unwrap();
+        assert_eq!(lib.schema_version().unwrap(), SCHEMA_VERSION);
+        let t = &lib.tracks().unwrap()[0];
+        assert_eq!(
+            (t.title.as_str(), t.analysis, t.analysis_rev),
+            ("A", AnalysisState::Done, 0)
+        );
+        lib.set_analyzed(t.id, t.grid, 10.0).unwrap();
+        assert_eq!(lib.track(t.id).unwrap().unwrap().analysis_rev, 1);
     }
 
     #[test]

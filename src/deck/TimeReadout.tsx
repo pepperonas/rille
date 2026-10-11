@@ -1,12 +1,9 @@
 import { useRef } from 'react';
 import type { Deck } from '../ipc/types';
-import { formatRemaining, formatTime, positionAt } from '../state/extrapolate';
+import { endingSoon, formatRemaining, formatTime, positionAt } from '../state/extrapolate';
 import { store, useAppState } from '../state/store';
 import { useAnimationFrame } from '../state/useAnimationFrame';
 import styles from './TimeReadout.module.css';
-
-/** Seconds before the end at which the remaining time turns into a warning. */
-export const WARN_SECONDS = 30;
 
 /** Elapsed / remaining time. Written directly to the DOM at display rate,
  *  so React does not re-render 120 times per second. */
@@ -26,10 +23,12 @@ export function TimeReadout({ deck }: { deck: Deck }) {
     if (remaining.current) {
       remaining.current.textContent = formatRemaining(pos, d.frames, frame.sampleRate);
     }
-    // The last 30 seconds: time to have the next track ready.
-    const warn = d.frames > 0 && (d.frames - pos) / frame.sampleRate < WARN_SECONDS;
-    if (root.current && (root.current.dataset.warn === 'true') !== warn) {
-      root.current.dataset.warn = String(warn);
+    // The last 30 seconds: time to have the next track ready. Marked on the deck, so the
+    // overview can show it too.
+    const warn = String(endingSoon(d, pos, frame.sampleRate));
+    const deckEl = root.current?.closest<HTMLElement>('section[data-deck]');
+    for (const el of [root.current, deckEl]) {
+      if (el && el.dataset.warn !== warn) el.dataset.warn = warn;
     }
   });
 

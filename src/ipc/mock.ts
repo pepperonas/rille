@@ -88,6 +88,7 @@ export function fakeTracks(from: number, count: number, analyzed: boolean): Libr
       firstBeat: analyzed && fakeBpm(n) !== null ? 0.05 + (n % 7) * 0.031 : null,
       analysis: analyzed ? 'done' : 'pending',
       error: null,
+      analysisRev: analyzed ? 1 : 0,
     };
   });
 }
@@ -167,6 +168,7 @@ export function createMockBackend(): Backend {
             const done: LibraryTrack = {
               ...t,
               analysis: 'done',
+              analysisRev: t.analysisRev + 1,
               bpm,
               firstBeat: bpm === null ? null : 0.05,
             };
@@ -533,6 +535,7 @@ export function createMockBackend(): Backend {
           firstBeat: 0.12,
           analysis: 'done',
           error: null,
+          analysisRev: 1,
         };
         library = [...library, t];
         emit('library-tracks', [t]);

@@ -1,41 +1,42 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { backend } from '../ipc';
 import type { Deck } from '../ipc/types';
-import { positionAt } from '../state/extrapolate';
+import { formatTime, positionAt } from '../state/extrapolate';
 import { store, useAppState } from '../state/store';
 import { useAnimationFrame } from '../state/useAnimationFrame';
 import { css, waveColors } from './colors';
-import { chooseLevel, columnMax, type Peaks } from './peaks';
 import { countDraw } from './drawCounter';
+import { chooseLevel, columnMax, seekTarget } from './peaks';
+import type { PeaksState } from './usePeaks';
+import { useCanvasSize } from './useCanvasSize';
 import styles from './Overview.module.css';
+
+/** Arrow keys move the playhead by this much (Shift: ten times as far). */
+const KEY_STEP_SECONDS = 5;
 
 interface Props {
   deck: Deck;
-  peaks: Peaks | null;
+  peaks: PeaksState;
 }
 
-/** The whole track at a glance. The waveform image is drawn only when the peaks or the size
- *  change; the playhead and the played part are a CSS overlay moved every frame. */
+/** The whole track at a glance, also a seek control. The waveform image is drawn only when
+ *  the peaks or the size change; playhead and played part are a CSS overlay. */
 export function Overview({ deck, peaks }: Props) {
   const i = deck === 'a' ? 0 : 1;
+  const label = deck === 'a' ? 'Deck 1' : 'Deck 2';
   const root = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
-  const [size, setSize] = useState({ w: 0, h: 0, dpr: 1 });
+  const size = useCanvasSize(root);
   const frames = useAppState((s) => s.frame?.decks[i]?.frames ?? 0);
   const sampleRate = useAppState((s) => s.frame?.sampleRate ?? 0);
   const cue = useAppState((s) => s.frame?.decks[i]?.cue ?? 0);
   const playing = useAppState((s) => s.frame?.decks[i]?.playing ?? false);
-
-  useEffect(() => {
-    const el = root.current;
-    if (!el) return;
-    const measure = () =>
-      setSize({ w: el.clientWidth, h: el.clientHeight, dpr: window.devicePixelRatio || 1 });
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    measure();
-    return () => observer.disconnect();
-  }, []);
+  // Whole seconds, only for the screen reader value; the bar itself moves through CSS.
+  const second = useAppState((s) => {
+    const rate = s.frame?.sampleRate ?? 0;
+    return rate > 0 ? Math.floor((s.frame?.decks[i]?.position ?? 0) / rate) : 0;
+  });
+  const data = peaks.status === 'ready' ? peaks.peaks : null;
 
   // The image.
   useEffect(() => {
@@ -48,11 +49,11 @@ export function Overview({ deck, peaks }: Props) {
     if (!g) return;
     g.clearRect(0, 0, c.width, c.height);
     const seconds = sampleRate > 0 ? frames / sampleRate : 0;
-    if (!peaks || seconds <= 0) return;
+    if (!data || seconds <= 0) return;
     const colors = waveColors(el);
     const cols = c.width;
     const spp = seconds / cols;
-    const level = chooseLevel(peaks, spp);
+    const level = chooseLevel(data, spp);
     const mid = c.height / 2;
     const v = [0, 0, 0];
     // Low widest at the back, high on top: the bands stay readable where they overlap.
@@ -64,13 +65,13 @@ export function Overview({ deck, peaks }: Props) {
     for (const [band, color, scale] of bands) {
       g.fillStyle = css(color);
       for (let x = 0; x < cols; x++) {
-        columnMax(peaks, level, x * spp, (x + 1) * spp, v);
+        columnMax(data, level, x * spp, (x + 1) * spp, v);
         const h = ((v[band] ?? 0) / 255) * mid * scale;
         if (h > 0.25) g.fillRect(x, mid - h, 1, 2 * h);
       }
     }
     countDraw();
-  }, [peaks, size, frames, sampleRate]);
+  }, [data, size, frames, sampleRate]);
 
   // Playhead and played part, at display rate while playing.
   useAnimationFrame(playing, (now) => {
@@ -85,25 +86,55 @@ export function Overview({ deck, peaks }: Props) {
     return d && !d.playing ? d.position : -1;
   });
 
-  const seek = (e: React.PointerEvent<HTMLDivElement>) => {
+  const seekTo = (frame: number) => backend.deck(deck, { type: 'seek', frame });
+
+  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || frames <= 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const at = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-    backend.deck(deck, { type: 'seek', frame: Math.round(at * frames) });
+    seekTo(seekTarget((e.clientX - rect.left) / rect.width, frames));
   };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const d = store.get().frame?.decks[i];
+    if (!d || frames <= 0 || sampleRate <= 0) return;
+    const step = KEY_STEP_SECONDS * sampleRate * (e.shiftKey ? 10 : 1);
+    const target: Record<string, number> = {
+      ArrowRight: d.position + step,
+      ArrowUp: d.position + step,
+      ArrowLeft: d.position - step,
+      ArrowDown: d.position - step,
+      Home: 0,
+      End: frames,
+    };
+    const to = target[e.key];
+    if (to === undefined) return;
+    e.preventDefault();
+    seekTo(seekTarget(to / frames, frames));
+  };
+
+  const note =
+    peaks.status === 'waiting' ? 'waiting' : peaks.status === 'unavailable' ? 'none' : undefined;
 
   return (
     <div
       ref={root}
       className={styles.overview}
-      data-peaks={peaks ? 'ready' : 'waiting'}
+      data-peaks={peaks.status}
+      data-note={note}
       style={{ '--cue': String(frames ? cue / frames : 0) } as React.CSSProperties}
-      onPointerDown={seek}
-      role="presentation"
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      role="slider"
+      tabIndex={0}
+      aria-label={`Position ${label}`}
+      aria-valuemin={0}
+      aria-valuemax={Math.round(frames / Math.max(1, sampleRate))}
+      aria-valuenow={second}
+      aria-valuetext={formatTime(second * sampleRate, sampleRate).replace(/\.\d$/, '')}
       title="Klicken springt an diese Stelle"
     >
       <canvas ref={canvas} className={styles.canvas} aria-hidden="true" />
-      {!peaks && <div className={styles.waiting} aria-hidden="true" />}
+      {peaks.status !== 'ready' && <div className={styles.waiting} aria-hidden="true" />}
       <div className={styles.played} aria-hidden="true" />
       <div className={styles.cue} aria-hidden="true" />
       <div className={styles.playhead} aria-hidden="true" />

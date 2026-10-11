@@ -101,6 +101,8 @@ export interface LibraryTrack {
   firstBeat: number | null;
   analysis: AnalysisState;
   error: string | null;
+  /** Changes with every finished analysis (cached peaks belong to one revision). */
+  analysisRev: number;
 }
 
 export interface LibraryProgress {

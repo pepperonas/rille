@@ -7,6 +7,16 @@
   background: var(--md-surface-container);
   overflow: hidden;
   cursor: pointer;
+  outline: none;
+}
+
+.overview:focus-visible {
+  box-shadow: inset 0 0 0 var(--stroke-thick) var(--md-primary);
+}
+
+/* Last 30 seconds (set on the deck by the time readout). */
+:global([data-warn='true']) .overview {
+  box-shadow: inset 0 0 0 var(--stroke-thick) var(--md-error);
 }
 
 .canvas {

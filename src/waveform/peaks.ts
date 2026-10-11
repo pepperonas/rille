@@ -178,3 +178,9 @@ export function columnMax(p: Peaks, level: number, from: number, to: number, out
     }
   }
 }
+
+/** Where a seek may land: never on the very last frame, which would end the track at once. */
+export function seekTarget(fraction: number, frames: number): number {
+  const f = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : 0;
+  return Math.max(0, Math.min(frames - 1, Math.round(f * frames)));
+}
