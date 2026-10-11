@@ -184,6 +184,19 @@ impl Library {
             )
             .optional()?;
         match existing {
+            // A failed analysis gets another try on import: the cause may have been passing
+            // (drive unplugged, permissions); a really broken file fails again quickly.
+            Some((id, size, mtime, analysis))
+                if size == stamp.size as i64
+                    && mtime == stamp.mtime
+                    && AnalysisState::parse(&analysis) == AnalysisState::Failed =>
+            {
+                self.conn.execute(
+                    "UPDATE tracks SET analysis = 'pending', error = NULL WHERE id = ?1",
+                    params![id],
+                )?;
+                Ok((id, true))
+            }
             Some((id, size, mtime, analysis))
                 if size == stamp.size as i64 && mtime == stamp.mtime =>
             {
@@ -434,6 +447,14 @@ mod tests {
         assert_eq!(t.analysis, AnalysisState::Failed);
         assert_eq!(t.error.as_deref(), Some("Datei ist beschädigt"));
         assert!(lib.pending().unwrap().is_empty());
+
+        // Importing again, unchanged, gives it another try.
+        let (same, pending) = lib
+            .upsert(Path::new("/m/broken.mp3"), STAMP, &info("B"))
+            .unwrap();
+        assert_eq!((same, pending), (id, true));
+        let t = lib.track(id).unwrap().unwrap();
+        assert_eq!((t.analysis, t.error), (AnalysisState::Pending, None));
     }
 
     #[test]

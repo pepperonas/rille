@@ -25,7 +25,8 @@
   background: transparent;
   color: var(--md-on-surface-variant);
   cursor: pointer;
-  transition: border-radius var(--motion-duration-short) var(--motion-easing-emphasized),
+  transition:
+    border-radius var(--motion-duration-short) var(--motion-easing-emphasized),
     background-color var(--motion-duration-short) var(--motion-easing-effects);
 }
 
@@ -35,7 +36,11 @@
 
 .iconButton:active {
   border-radius: var(--shape-md);
-  background: color-mix(in srgb, var(--md-on-surface) calc(var(--state-pressed) * 100%), transparent);
+  background: color-mix(
+    in srgb,
+    var(--md-on-surface) calc(var(--state-pressed) * 100%),
+    transparent
+  );
 }
 
 .status {

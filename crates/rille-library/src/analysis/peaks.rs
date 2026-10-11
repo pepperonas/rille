@@ -166,8 +166,8 @@ pub struct PeakBuilder {
 
 impl PeakBuilder {
     pub fn new(sample_rate: u32) -> PeakBuilder {
-        // ~5 ms per bin at level 0 for any rate.
-        let frames_per_bin = 256 * (sample_rate as usize).div_ceil(48_000).max(1);
+        // ~5.3 ms per bin at level 0 (256 frames at 48 kHz), at any rate.
+        let frames_per_bin = ((f64::from(sample_rate) * 256.0 / 48_000.0).round() as usize).max(1);
         PeakBuilder {
             sample_rate,
             frames_per_bin,
@@ -334,5 +334,13 @@ mod tests {
         let p = PeakBuilder::new(48_000).finish();
         assert!(p.levels.iter().all(Vec::is_empty));
         assert_eq!(Peaks::from_bytes(&p.to_bytes()), Ok(p));
+    }
+
+    #[test]
+    fn bins_cover_the_same_time_at_any_rate() {
+        for rate in [8_000u32, 44_100, 48_000, 96_000, 192_000] {
+            let secs = f64::from(PeakBuilder::new(rate).frames_per_bin as u32) / f64::from(rate);
+            assert!((secs - 256.0 / 48_000.0).abs() < 1e-4, "{rate}: {secs}");
+        }
     }
 }

@@ -75,11 +75,20 @@ export function LibraryPanel() {
           Ordner importieren
         </button>
       </header>
+      {library.error && (
+        <p className={styles.error} role="alert">
+          {library.error}
+        </p>
+      )}
 
       {library.tracks.length === 0 ? (
         <div className={styles.empty}>
           <p className={styles.emptyTitle}>
-            {library.ready ? 'Noch keine Tracks' : 'Library wird geladen …'}
+            {library.error
+              ? 'Library nicht verfügbar'
+              : library.ready
+                ? 'Noch keine Tracks'
+                : 'Library wird geladen …'}
           </p>
           <p className={styles.emptyHint}>
             Importiere einen Ordner mit Musik oder zieh ihn aus dem Finder hierher. rille analysiert
@@ -115,7 +124,12 @@ export function LibraryPanel() {
           {rows.length === 0 ? (
             <p className={styles.noMatch}>Keine Treffer für „{library.query}“</p>
           ) : (
-            <TrackList rows={rows} selected={library.selected} onDragStart={start} />
+            <TrackList
+              rows={rows}
+              selected={library.selected}
+              reveal={library.reveal}
+              onDragStart={start}
+            />
           )}
         </>
       )}
@@ -139,11 +153,12 @@ export function LibraryPanel() {
 
 interface ListProps {
   rows: LibraryTrack[];
+  reveal: number;
   selected: number | null;
   onDragStart: (e: React.PointerEvent, track: LibraryTrack) => void;
 }
 
-function TrackList({ rows, selected, onDragStart }: ListProps) {
+function TrackList({ rows, selected, reveal, onDragStart }: ListProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [height, setHeight] = useState(0);
@@ -159,16 +174,21 @@ function TrackList({ rows, selected, onDragStart }: ListProps) {
   }, []);
 
   // Keep the selected row in view (keyboard, controller, search).
+  // Bring the selection into view when it moved on purpose (keys, controller, search), not
+  // when background updates shift its row while the user browses elsewhere.
   const selectedIndex = rows.findIndex((t) => t.id === selected);
+  const revealed = useRef(reveal);
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!el || selectedIndex < 0) return;
+    if (!el || revealed.current === reveal) return;
+    revealed.current = reveal;
+    if (selectedIndex < 0) return;
     const top = selectedIndex * rowHeight;
     if (top < el.scrollTop) el.scrollTop = top;
     else if (top + rowHeight > el.scrollTop + el.clientHeight) {
       el.scrollTop = top + rowHeight - el.clientHeight;
     }
-  }, [selectedIndex, rowHeight]);
+  }, [reveal, selectedIndex, rowHeight]);
 
   const page = Math.max(1, Math.floor(height / rowHeight) - 1);
   const first = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN);
@@ -200,7 +220,9 @@ function TrackList({ rows, selected, onDragStart }: ListProps) {
       role="listbox"
       aria-label="Tracks"
       tabIndex={0}
-      aria-activedescendant={selectedIndex >= 0 ? `track-${selected}` : undefined}
+      aria-activedescendant={
+        selectedIndex >= first && selectedIndex < last ? `track-${selected}` : undefined
+      }
       onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
       onKeyDown={onKeyDown}
     >

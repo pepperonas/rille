@@ -162,6 +162,8 @@ export interface MonitorLine {
 export interface BackendEvents {
   'deck-loaded': DeckLoaded;
   'deck-load-failed': DeckLoadFailed;
+  /** The track plays, but not all of the file could be decoded. */
+  'deck-load-warning': DeckLoadFailed;
   'deck-ended': Deck;
   'audio-changed': AudioStatus;
   'controller-changed': ControllerStatus;

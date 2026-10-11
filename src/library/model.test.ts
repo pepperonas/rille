@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { LibraryTrack } from '../ipc/types';
 import {
+  keepVisibleSelection,
+  mergeUnder,
   formatBpm,
   formatDuration,
   initialLibrary,
@@ -146,5 +148,34 @@ describe('small helpers', () => {
     expect(formatDuration(null)).toBe('–');
     expect(formatBpm(127.95)).toBe('128.0');
     expect(formatBpm(null)).toBe('–');
+  });
+});
+
+describe('initial fetch and filter changes', () => {
+  it('lets rows from events win over an older fetch', () => {
+    const fromEvent = [track(2, { analysis: 'done', bpm: 128 })];
+    const fetched = [track(1), track(2, { analysis: 'pending', bpm: null })];
+    const merged = mergeUnder(fromEvent, fetched);
+    expect(merged.map((t) => [t.id, t.analysis])).toEqual([
+      [1, 'done'],
+      [2, 'done'],
+    ]);
+    expect(merged[1]?.bpm).toBe(128);
+  });
+
+  it('moves a selection the filter hides onto the first shown row', () => {
+    const base = {
+      ...initialLibrary,
+      tracks: [
+        track(1, { title: 'Alpha' }),
+        track(2, { title: 'Beta' }),
+        track(3, { title: 'Bravo' }),
+      ],
+      selected: 1,
+    };
+    expect(keepVisibleSelection({ ...base, query: 'b' }).selected).toBe(2);
+    const kept = { ...base, query: 'alpha' };
+    expect(keepVisibleSelection(kept)).toBe(kept);
+    expect(keepVisibleSelection({ ...base, query: 'zzz' }).selected).toBeNull();
   });
 });

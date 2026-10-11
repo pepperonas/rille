@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { arcPath, dragValue, valueToAngle, wheelStep, WHEEL_RANGE_PX } from './knobGeometry';
 
 describe('knob geometry', () => {
-  it('maps the value range onto 270 degrees with the centre at 12 o\'clock', () => {
+  it("maps the value range onto 270 degrees with the centre at 12 o'clock", () => {
     expect(valueToAngle(0)).toBe(-135);
     expect(valueToAngle(0.5)).toBe(0);
     expect(valueToAngle(1)).toBe(135);

@@ -35,8 +35,14 @@ pub enum DecodeError {
     UnsupportedCodec(String),
     #[error("Die Datei enthält keine Audiodaten")]
     Empty,
-    #[error("Track ist länger als {} Minuten", MAX_SECONDS / 60)]
+    #[error(
+        "Track ist zu lang (Grenze: {} Minuten, bei sehr hohen Abtastraten weniger)",
+        MAX_SECONDS / 60
+    )]
     TooLong,
+    /// The file held more audio than its header announced and the reserve allowed.
+    #[error("Track nach {} abgeschnitten: die Datei ist länger, als ihr Header angibt", mmss(*.0))]
+    Truncated(f64),
     #[error("Abtastrate {0} Hz wird nicht unterstützt")]
     UnsupportedRate(u32),
     #[error("Datei ist beschädigt: {0}")]
@@ -297,6 +303,11 @@ pub fn open_stream(path: &Path, target_rate: u32, id: u64) -> Result<DecodeStrea
     }
 }
 
+fn mmss(secs: f64) -> String {
+    let s = secs.max(0.0).round() as u64;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
 /// Most source frames accepted at `rate`.
 fn max_frames(rate: u32) -> u64 {
     (MAX_SECONDS * u64::from(rate)).min(MAX_FRAMES)
@@ -316,24 +327,33 @@ impl DecodeStream {
             return Ok(()); // decoded completely in `open_stream`
         }
         let (track, written, resampler) = (&self.track, &mut self.written, &mut self.resampler);
+        let mut dropped = false;
+        // Frames past the capacity are dropped by `write`; remember that it happened.
+        let mut put = |out: &[f32]| {
+            let n = track.write(*written, out);
+            dropped |= n < out.len() / 2;
+            *written += n;
+        };
         let result = self
             .source
             .pump(&mut keep_going, &mut |_, stereo| match resampler.as_mut() {
                 Some(r) => r
-                    .push(stereo, &mut |out| *written += track.write(*written, out))
+                    .push(stereo, &mut put)
                     .map_err(|e| DecodeError::Resample(e.to_string())),
                 None => {
-                    *written += track.write(*written, stereo);
+                    put(stereo);
                     Ok(())
                 }
             });
         if let Some(resampler) = self.resampler.take() {
-            let (track, written) = (&self.track, &mut self.written);
-            let _ = resampler.finish(&mut |out| *written += track.write(*written, out));
+            let _ = resampler.finish(&mut put);
         }
         self.track.finish(self.written);
         if self.written == 0 && result.is_ok() {
             return Err(DecodeError::Empty);
+        }
+        if dropped && result.is_ok() {
+            return Err(DecodeError::Truncated(self.track.duration_secs()));
         }
         result
     }
@@ -364,5 +384,53 @@ mod tests {
         let mut out = Vec::new();
         append_as_stereo(&mut out, &[1.0, 2.0, 3.0, 4.0, 5.0, 6.0], 3);
         assert_eq!(out, [1.0, 2.0, 4.0, 5.0]);
+    }
+
+    /// 16-bit stereo WAV of a quiet tone.
+    fn write_wav(path: &Path, rate: u32, seconds: f32) {
+        let frames = (rate as f32 * seconds) as u32;
+        let mut out = Vec::new();
+        let data_len = frames * 4;
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data_len).to_le_bytes());
+        out.extend_from_slice(b"WAVEfmt ");
+        for v in [16u32, 1 | (2 << 16), rate, rate * 4, 4 | (16 << 16)] {
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..frames {
+            let v = ((i as f32 * 0.05).sin() * 8_000.0) as i16;
+            out.extend_from_slice(&v.to_le_bytes());
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        std::fs::write(path, out).unwrap();
+    }
+
+    #[test]
+    fn audio_beyond_the_capacity_is_reported_as_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("long.wav");
+        write_wav(&path, 48_000, 3.0);
+        let mut stream = open_stream(&path, 48_000, 1).unwrap();
+        // As if the header had promised less than the file holds, beyond the reserve.
+        stream.track = Arc::new(TrackAudio::streaming(1, 48_000, 48_000, 72_000));
+        let track = stream.track();
+        match stream.run(|| true) {
+            Err(DecodeError::Truncated(secs)) => assert!((secs - 1.5).abs() < 1e-9, "{secs}"),
+            other => panic!("expected Truncated, got {other:?}"),
+        }
+        assert!(track.is_complete());
+        assert_eq!(track.frames(), 72_000);
+        assert!(DecodeError::Truncated(92.0).to_string().contains("1:32"));
+    }
+
+    #[test]
+    fn a_file_that_fits_is_not_truncated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fits.wav");
+        write_wav(&path, 44_100, 2.0);
+        let stream = open_stream(&path, 48_000, 1).unwrap();
+        stream.run(|| true).unwrap();
     }
 }

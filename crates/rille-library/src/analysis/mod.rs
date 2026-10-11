@@ -46,14 +46,7 @@ pub fn analyze_file(
         |rate, stereo| {
             let (_, onset, peaks) = state
                 .get_or_insert_with(|| (rate, OnsetDetector::new(rate), PeakBuilder::new(rate)));
-            mono.clear();
-            mono.extend(
-                stereo
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|f| 0.5 * (f[0] + f[1])),
-            );
+            to_mono(stereo, &mut mono);
             onset.push(&mono);
             peaks.push(&mono);
         },
@@ -69,4 +62,41 @@ pub fn analyze_file(
         peaks: peaks.finish(),
         duration_secs: frames as f64 / f64::from(rate),
     })
+}
+
+/// Interleaved stereo to mono. Non-finite samples (a damaged float file) become silence: a
+/// single NaN would otherwise poison the filters for the rest of the track.
+fn to_mono(stereo: &[f32], mono: &mut Vec<f32>) {
+    mono.clear();
+    mono.extend(stereo.as_chunks::<2>().0.iter().map(|f| {
+        let m = 0.5 * (f[0] + f[1]);
+        if m.is_finite() { m } else { 0.0 }
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn broken_samples_do_not_poison_the_peaks() {
+        let mut stereo: Vec<f32> = (0..48_000)
+            .flat_map(|i| {
+                let v = 0.5 * (i as f32 * 0.3).sin();
+                [v, v]
+            })
+            .collect();
+        stereo[1_000] = f32::NAN;
+        stereo[2_001] = f32::INFINITY;
+        let mut mono = Vec::new();
+        to_mono(&stereo, &mut mono);
+        assert!(mono.iter().all(|v| v.is_finite()));
+        let mut peaks = PeakBuilder::new(48_000);
+        peaks.push(&mono);
+        let p = peaks.finish();
+        let last = p.levels[0]
+            .last()
+            .map_or(0, |b| b.iter().copied().max().unwrap_or(0));
+        assert!(last > 100, "the end still has a waveform: {last}");
+    }
 }

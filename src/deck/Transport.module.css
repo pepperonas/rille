@@ -11,7 +11,8 @@
   border: 0;
   cursor: pointer;
   touch-action: none;
-  transition: background-color var(--motion-duration-short) var(--motion-easing-effects),
+  transition:
+    background-color var(--motion-duration-short) var(--motion-easing-effects),
     color var(--motion-duration-short) var(--motion-easing-effects);
 }
 

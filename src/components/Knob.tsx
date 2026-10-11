@@ -120,7 +120,13 @@ export function Knob({
           <path className={styles.value} d={arcPath(SIZE / 2, SIZE / 2, R, origin, angle)} />
           <g style={{ transform: `rotate(${angle}deg)`, transformOrigin: '50% 50%' }}>
             <circle className={styles.cap} cx={SIZE / 2} cy={SIZE / 2} r={R - 5} />
-            <line className={styles.pointer} x1={SIZE / 2} y1={SIZE / 2 - 4} x2={SIZE / 2} y2={SIZE / 2 - R + 6} />
+            <line
+              className={styles.pointer}
+              x1={SIZE / 2}
+              y1={SIZE / 2 - 4}
+              x2={SIZE / 2}
+              y2={SIZE / 2 - R + 6}
+            />
           </g>
         </svg>
       </div>

@@ -34,7 +34,8 @@
   border-radius: var(--shape-full);
   border: var(--stroke-thick) solid var(--md-outline);
   background: var(--md-surface-container-highest);
-  transition: background-color var(--motion-duration-short) var(--motion-easing-effects),
+  transition:
+    background-color var(--motion-duration-short) var(--motion-easing-effects),
     border-color var(--motion-duration-short) var(--motion-easing-effects);
 }
 
@@ -47,7 +48,8 @@
   border-radius: var(--shape-full);
   background: var(--md-outline);
   transform: translateY(-50%);
-  transition: transform var(--motion-duration-medium) var(--motion-easing-spatial-default),
+  transition:
+    transform var(--motion-duration-medium) var(--motion-easing-spatial-default),
     width var(--motion-duration-short) var(--motion-easing-spatial-fast),
     height var(--motion-duration-short) var(--motion-easing-spatial-fast),
     background-color var(--motion-duration-short) var(--motion-easing-effects);

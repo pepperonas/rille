@@ -92,7 +92,8 @@
   color: var(--md-on-surface-variant);
   font: var(--type-label-m);
   cursor: pointer;
-  transition: border-radius var(--motion-duration-short) var(--motion-easing-spatial-fast),
+  transition:
+    border-radius var(--motion-duration-short) var(--motion-easing-spatial-fast),
     background-color var(--motion-duration-short) var(--motion-easing-effects);
 }
 

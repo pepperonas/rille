@@ -34,6 +34,8 @@ pub enum UiEvent {
     State(StateFrame),
     DeckLoaded(DeckLoaded),
     DeckLoadFailed(DeckLoadFailed),
+    /// The track plays, but not all of it could be decoded.
+    DeckLoadWarning(DeckLoadFailed),
     DeckEnded(Deck),
     AudioChanged(AudioStatus),
 }
@@ -358,6 +360,15 @@ impl AudioService {
                 // A newer load or an unload on this deck stops the decode; what is decoded stays.
                 if let Err(message) = run_guarded(stream, &track, is_current) {
                     tracing::warn!(path = %request.path.display(), %message, "decode stopped early");
+                    // Cancelled loads (newer load, eject) are not news.
+                    if is_current() {
+                        (shared.notify)(UiEvent::DeckLoadWarning(DeckLoadFailed {
+                            deck,
+                            track_id: request.id,
+                            title: request.meta.title.clone(),
+                            message,
+                        }));
+                    }
                 }
             }
         });

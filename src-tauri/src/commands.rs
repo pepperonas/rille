@@ -11,7 +11,9 @@ use tauri::{Manager, State};
 use crate::audio_service::{AudioService, TrackMeta};
 use crate::controller_service::{ControllerService, ControllerStatus};
 use crate::dto::{AudioDevice, AudioStatus, Deck, DeckAction, MixerAction, StateFrame};
-use crate::library_service::{LibraryProgress, LibraryService, LibraryTrack, LoadInfo};
+use crate::library_service::{
+    LibraryProgress, LibraryService, LibraryTrack, LibraryUnavailable, LoadInfo,
+};
 
 /// Where state frames go. Replaced on every subscription (e.g. after a webview reload).
 #[derive(Default)]
@@ -76,8 +78,12 @@ fn meta_of(info: LoadInfo) -> TrackMeta {
 }
 
 fn library(app: &tauri::AppHandle) -> Result<State<'_, LibraryService>, String> {
-    app.try_state::<LibraryService>()
-        .ok_or_else(|| "Die Library ist nicht verfügbar".to_string())
+    app.try_state::<LibraryService>().ok_or_else(|| {
+        app.try_state::<LibraryUnavailable>().map_or_else(
+            || "Die Library ist nicht verfügbar".to_string(),
+            |u| format!("Die Library ist nicht verfügbar: {}", u.0),
+        )
+    })
 }
 
 #[tauri::command]

@@ -15,5 +15,7 @@ export function eqText(v: number, killed: boolean): string {
 /** Filter position as text: low-pass, off, high-pass. */
 export function filterText(v: number): string {
   if (Math.abs(v - 0.5) <= 0.03) return 'aus';
-  return v < 0.5 ? `Tiefpass ${Math.round((0.5 - v) * 200)} %` : `Hochpass ${Math.round((v - 0.5) * 200)} %`;
+  return v < 0.5
+    ? `Tiefpass ${Math.round((0.5 - v) * 200)} %`
+    : `Hochpass ${Math.round((v - 0.5) * 200)} %`;
 }

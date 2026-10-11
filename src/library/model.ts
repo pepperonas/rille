@@ -18,6 +18,11 @@ export interface LibraryState {
   selected: number | null;
   /** The list has been fetched once (distinguishes "empty" from "not loaded yet"). */
   ready: boolean;
+  /** Why the library cannot be used or an import failed; shown in the panel. */
+  error: string | null;
+  /** Bumped when the selection moved on purpose (keys, controller, search); the list scrolls
+   *  it into view only then, not when background updates shift its row. */
+  reveal: number;
 }
 
 export const initialLibrary: LibraryState = {
@@ -27,6 +32,8 @@ export const initialLibrary: LibraryState = {
   sort: { key: 'added', dir: 'asc' },
   selected: null,
   ready: false,
+  error: null,
+  reveal: 0,
 };
 
 /** Replace tracks with the same id, add new ones; result in id (= import) order. */
@@ -35,6 +42,21 @@ export function mergeTracks(list: LibraryTrack[], incoming: LibraryTrack[]): Lib
   const byId = new Map(list.map((t) => [t.id, t]));
   for (const t of incoming) byId.set(t.id, t);
   return [...byId.values()].sort((a, b) => a.id - b.id);
+}
+
+/** The initial fetch, slid underneath what events already delivered: a row from an event is
+ *  never older than the fetched one (analysis only moves forward), so it wins. */
+export function mergeUnder(current: LibraryTrack[], fetched: LibraryTrack[]): LibraryTrack[] {
+  return mergeTracks(fetched, current);
+}
+
+/** After the filter changed: keep the selection if it is still shown, else the first row. A
+ *  hidden selection would let Enter or the controller load a track nobody can see. */
+export function keepVisibleSelection(s: LibraryState): LibraryState {
+  const visible = visibleTracks(s);
+  if (visible.some((t) => t.id === s.selected)) return s;
+  const selected = visible[0]?.id ?? null;
+  return selected === s.selected ? s : { ...s, selected };
 }
 
 /** Lower case without accents: "Beyoncé" is found by "beyonce". */

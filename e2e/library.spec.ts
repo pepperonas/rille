@@ -43,10 +43,14 @@ test.describe('with a library', () => {
     expect(rendered).toBeGreaterThan(5);
     expect(rendered).toBeLessThan(64);
     await list(page).evaluate((el) => (el.scrollTop = el.scrollHeight));
-    const ids = await list(page)
-      .getByRole('option')
-      .evaluateAll((rows) => rows.map((r) => r.id));
-    expect(ids).toContain('track-64');
+    // The rows follow the scroll position on the next render.
+    await expect
+      .poll(() =>
+        list(page)
+          .getByRole('option')
+          .evaluateAll((rows) => rows.map((r) => r.id)),
+      )
+      .toContain('track-64');
   });
 
   test('search filters by text and tempo', async ({ page }) => {
@@ -128,6 +132,19 @@ test.describe('with a library', () => {
     await deck(page, 'a').getByRole('button', { name: 'Deck 1 auswerfen' }).click();
     await fifth.dblclick();
     await expect(deck(page, 'a').getByRole('heading')).toHaveText(other);
+  });
+
+  test('after filtering, Enter loads what is shown, not a hidden selection', async ({ page }) => {
+    await deck(page, 'a').getByRole('button', { name: 'Deck 1 auswerfen' }).click();
+    await list(page).getByRole('option').first().click();
+    const search = page.getByRole('searchbox', { name: 'Library durchsuchen' });
+    await search.fill('dub atlas');
+    const first = list(page).getByRole('option').first();
+    await expect(first).toHaveAttribute('aria-selected', 'true');
+    const title = (await first.locator(cell(2)).textContent()) ?? '';
+    await search.press('Enter');
+    await expect(deck(page, 'a').getByRole('heading')).toHaveText(title);
+    await expect(deck(page, 'a')).toContainText('Dub Atlas');
   });
 
   test('a short press is a click, not a drag', async ({ page }) => {

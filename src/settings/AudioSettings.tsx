@@ -81,7 +81,9 @@ export function AudioSettings({ open }: { open: boolean }) {
         </div>
         <div>
           <dt>Abtastrate</dt>
-          <dd className="numeric">{status?.sampleRate ? `${status.sampleRate / 1000} kHz` : '–'}</dd>
+          <dd className="numeric">
+            {status?.sampleRate ? `${status.sampleRate / 1000} kHz` : '–'}
+          </dd>
         </div>
         <div>
           <dt>Aussetzer</dt>

@@ -52,6 +52,11 @@ export function DeckPanel({ deck }: Props) {
                   )}
                 </p>
               )}
+              {info.warning && (
+                <p className={styles.warning} role="alert">
+                  {info.warning}
+                </p>
+              )}
             </div>
             <TimeReadout deck={deck} />
             <div className={styles.controls}>

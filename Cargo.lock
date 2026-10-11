@@ -3343,6 +3343,7 @@ dependencies = [
  "rille-engine",
  "rille-library",
  "rille-midi",
+ "rusqlite",
  "serde",
  "serde_json",
  "tauri",

@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 use audio_service::{AudioService, UiEvent};
 use commands::StateChannel;
 use controller_service::{ControllerEvent, ControllerService};
-use library_service::{LibraryEvent, LibraryService, worker_count};
+use library_service::{LibraryEvent, LibraryService, LibraryUnavailable, worker_count};
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -71,6 +71,9 @@ pub fn run() {
 fn start_library(app: &tauri::App) {
     let (Ok(data), Ok(cache)) = (app.path().app_data_dir(), app.path().app_cache_dir()) else {
         tracing::error!("no application directories; library disabled");
+        app.manage(LibraryUnavailable(
+            "Kein Ordner für die Library gefunden (Application Support)".into(),
+        ));
         return;
     };
     let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
@@ -93,7 +96,10 @@ fn start_library(app: &tauri::App) {
         Ok(library) => {
             app.manage(library);
         }
-        Err(e) => tracing::error!(%e, "library unavailable"),
+        Err(e) => {
+            tracing::error!(%e, "library unavailable");
+            app.manage(LibraryUnavailable(e.to_string()));
+        }
     }
 }
 
@@ -113,6 +119,7 @@ fn deliver(app: &tauri::AppHandle, event: UiEvent) {
         }
         UiEvent::DeckLoaded(e) => app.emit("deck-loaded", e),
         UiEvent::DeckLoadFailed(e) => app.emit("deck-load-failed", e),
+        UiEvent::DeckLoadWarning(e) => app.emit("deck-load-warning", e),
         UiEvent::DeckEnded(deck) => app.emit("deck-ended", deck),
         UiEvent::AudioChanged(status) => app.emit("audio-changed", status),
     };

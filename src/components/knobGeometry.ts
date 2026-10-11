@@ -37,6 +37,7 @@ const LINE_PX = 16;
 
 /** Value change for one wheel event, proportional to its size (trackpads send many small ones). */
 export function wheelStep(deltaY: number, deltaMode: number, fine: boolean): number {
-  const px = deltaMode === 1 ? deltaY * LINE_PX : deltaMode === 2 ? deltaY * WHEEL_RANGE_PX : deltaY;
+  const px =
+    deltaMode === 1 ? deltaY * LINE_PX : deltaMode === 2 ? deltaY * WHEEL_RANGE_PX : deltaY;
   return -px / (WHEEL_RANGE_PX * (fine ? 10 : 1));
 }

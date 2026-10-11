@@ -56,7 +56,8 @@
   letter-spacing: var(--tracking-caps);
   cursor: pointer;
   touch-action: none;
-  transition: border-radius var(--motion-duration-short) var(--motion-easing-spatial-fast),
+  transition:
+    border-radius var(--motion-duration-short) var(--motion-easing-spatial-fast),
     background-color var(--motion-duration-short) var(--motion-easing-effects);
 }
 

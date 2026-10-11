@@ -51,6 +51,17 @@ All notable changes to rille are documented here. The format follows
 - Track loading no longer decodes the whole file first (was ~360 ms for a 3:43 MP3).
 
 ### Fixed
+- Library (review of M5): rows delivered by events are no longer overwritten by a slower
+  initial fetch; Enter and the controller load only a track the filter shows; a file changed
+  during its own analysis is analysed again instead of keeping the stale result; a failed
+  analysis is retried on the next import; analysis results are sent in batches (every 250 ms)
+  instead of one re-sort per track; the list no longer jumps back to the selection while
+  background updates move it; an unreadable database is moved aside and replaced, and the
+  panel says why the library is unavailable.
+- Decoding: a file longer than its header (beyond the reserve) is reported on the deck instead
+  of being cut silently; NaN samples no longer silence the rest of a waveform; peak bins cover
+  the same time at every sample rate; two loads on one deck within one round trip can no
+  longer leave it loading forever.
 - Keylock: pausing, jumping, reversing, touching the platter or switching KEY off no longer
   clicks — the stretcher fades out over 4 ms instead of being cut. After reverse or a scratch,
   keylock re-engages only once the rate has settled, so its audio stays aligned with the

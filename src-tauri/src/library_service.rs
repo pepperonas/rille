@@ -5,12 +5,13 @@
 //! the UI keep their cores. The database sits behind one mutex; every access is a short query,
 //! the long analysis never holds it.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
+use std::time::Duration;
 
 use rille_library::analysis::analyze_file;
 use rille_library::db::{AnalysisState, DbError, FileStamp, Library, TrackRow};
@@ -20,6 +21,9 @@ use serde::Serialize;
 
 /// Tracks per `library-tracks` event while importing: few events, none huge.
 const IMPORT_BATCH: usize = 200;
+/// Analysis results are collected and sent at most this often: with eight workers the UI
+/// would otherwise re-sort the whole list for every single track.
+const FLUSH_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -94,6 +98,9 @@ pub enum LibraryEvent {
     Progress(LibraryProgress),
 }
 
+/// Managed instead of the service when the library could not start; says why.
+pub struct LibraryUnavailable(pub String);
+
 pub type LibraryNotify = Arc<dyn Fn(LibraryEvent) + Send + Sync>;
 
 /// What to put on a deck for a library track.
@@ -120,9 +127,13 @@ impl From<&TrackRow> for LoadInfo {
 #[derive(Default)]
 struct Queue {
     jobs: VecDeque<(i64, PathBuf)>,
-    /// Queued or being analysed; a track is never in the queue twice.
-    known: HashSet<i64>,
-    in_flight: u32,
+    /// Ids in `jobs`; a track is never waiting twice.
+    waiting: HashSet<i64>,
+    /// Ids being analysed right now.
+    running: HashSet<i64>,
+    /// Queued again while running (the file changed during its analysis): analysed once more
+    /// when the current run ends, so the stale result does not stay.
+    rerun: HashMap<i64, PathBuf>,
     imports: u32,
     queued: u32,
     analyzed: u32,
@@ -131,24 +142,38 @@ struct Queue {
 
 impl Queue {
     fn push(&mut self, id: i64, path: PathBuf) -> bool {
-        if !self.known.insert(id) {
+        if self.waiting.contains(&id) || self.rerun.contains_key(&id) {
             return false;
         }
-        self.jobs.push_back((id, path));
+        if self.running.contains(&id) {
+            self.rerun.insert(id, path);
+        } else {
+            self.waiting.insert(id);
+            self.jobs.push_back((id, path));
+        }
         self.queued += 1;
         true
     }
 
     fn take(&mut self) -> Option<(i64, PathBuf)> {
-        let job = self.jobs.pop_front()?;
-        self.in_flight += 1;
-        Some(job)
+        let (id, path) = self.jobs.pop_front()?;
+        self.waiting.remove(&id);
+        self.running.insert(id);
+        Some((id, path))
     }
 
-    fn finish(&mut self, id: i64) {
-        self.known.remove(&id);
-        self.in_flight = self.in_flight.saturating_sub(1);
+    /// A run ended. Returns whether the track was queued again for a rerun.
+    fn finish(&mut self, id: i64) -> bool {
+        self.running.remove(&id);
         self.analyzed += 1;
+        match self.rerun.remove(&id) {
+            Some(path) => {
+                self.waiting.insert(id);
+                self.jobs.push_back((id, path));
+                true
+            }
+            None => false,
+        }
     }
 
     fn progress(&self) -> LibraryProgress {
@@ -161,11 +186,18 @@ impl Queue {
 
     /// Start counting afresh once everything is through, so the next import shows 0 / n.
     fn reset_if_idle(&mut self) {
-        if self.imports == 0 && self.jobs.is_empty() && self.in_flight == 0 {
+        if self.imports == 0 && self.jobs.is_empty() && self.running.is_empty() {
             self.queued = 0;
             self.analyzed = 0;
         }
     }
+}
+
+/// Events waiting for the next flush.
+#[derive(Default)]
+struct Outbox {
+    tracks: Vec<LibraryTrack>,
+    progress: Option<LibraryProgress>,
 }
 
 struct Shared {
@@ -174,6 +206,7 @@ struct Shared {
     queue: Mutex<Queue>,
     wake: Condvar,
     notify: LibraryNotify,
+    outbox: Mutex<Outbox>,
     stopping: AtomicBool,
 }
 
@@ -204,7 +237,7 @@ impl LibraryService {
             let _ = std::fs::create_dir_all(dir);
         }
         let _ = std::fs::create_dir_all(&peaks_dir);
-        let db = Library::open(db_path)?;
+        let db = open_or_set_aside(db_path)?;
         let pending = db.pending()?;
         let service = LibraryService {
             shared: Arc::new(Shared {
@@ -213,9 +246,11 @@ impl LibraryService {
                 queue: Mutex::new(Queue::default()),
                 wake: Condvar::new(),
                 notify,
+                outbox: Mutex::new(Outbox::default()),
                 stopping: AtomicBool::new(false),
             }),
         };
+        service.spawn_flusher();
         for n in 0..workers.max(1) {
             service.spawn_worker(n);
         }
@@ -256,7 +291,7 @@ impl LibraryService {
         {
             let mut q = lock(&self.shared.queue);
             q.imports += 1;
-            (self.shared.notify)(LibraryEvent::Progress(q.progress()));
+            self.post_progress(q.progress());
         }
         let service = self.clone();
         let spawned = thread::Builder::new()
@@ -269,7 +304,7 @@ impl LibraryService {
                 let mut q = lock(&service.shared.queue);
                 q.imports = q.imports.saturating_sub(1);
                 q.reset_if_idle();
-                (service.shared.notify)(LibraryEvent::Progress(q.progress()));
+                service.post_progress(q.progress());
             });
         if let Err(e) = spawned {
             tracing::error!(%e, "could not start import");
@@ -300,13 +335,13 @@ impl LibraryService {
                     batch.push(track);
                 }
                 if batch.len() >= IMPORT_BATCH {
-                    (self.shared.notify)(LibraryEvent::Tracks(std::mem::take(&mut batch)));
+                    self.post_tracks(std::mem::take(&mut batch));
                     self.enqueue(std::mem::take(&mut jobs));
                 }
             }
         }
         if !batch.is_empty() {
-            (self.shared.notify)(LibraryEvent::Tracks(batch));
+            self.post_tracks(batch);
         }
         self.enqueue(jobs);
     }
@@ -359,7 +394,7 @@ impl LibraryService {
         for (id, path) in jobs {
             q.push(id, path);
         }
-        (self.shared.notify)(LibraryEvent::Progress(q.progress()));
+        self.post_progress(q.progress());
         drop(q);
         self.shared.wake.notify_all();
     }
@@ -372,19 +407,56 @@ impl LibraryService {
                 lower_priority();
                 while let Some((id, path)) = service.next_job() {
                     let track = service.analyze(id, &path);
+                    if let Some(track) = track {
+                        service.post_tracks(vec![track]);
+                    }
                     let mut q = lock(&service.shared.queue);
-                    q.finish(id);
-                    let progress = q.progress();
+                    let again = q.finish(id);
+                    service.post_progress(q.progress());
                     q.reset_if_idle();
                     drop(q);
-                    if let Some(track) = track {
-                        (service.shared.notify)(LibraryEvent::Tracks(vec![track]));
+                    if again {
+                        service.shared.wake.notify_one();
                     }
-                    (service.shared.notify)(LibraryEvent::Progress(progress));
                 }
             });
         if let Err(e) = spawned {
             tracing::error!(%e, "could not start analysis worker");
+        }
+    }
+
+    fn post_tracks(&self, tracks: Vec<LibraryTrack>) {
+        lock(&self.shared.outbox).tracks.extend(tracks);
+    }
+
+    fn post_progress(&self, progress: LibraryProgress) {
+        lock(&self.shared.outbox).progress = Some(progress);
+    }
+
+    /// Send what collected in the outbox, tracks before progress (so "done" arrives with the
+    /// last row already in place).
+    fn flush(&self) {
+        let Outbox { tracks, progress } = std::mem::take(&mut *lock(&self.shared.outbox));
+        if !tracks.is_empty() {
+            (self.shared.notify)(LibraryEvent::Tracks(tracks));
+        }
+        if let Some(p) = progress {
+            (self.shared.notify)(LibraryEvent::Progress(p));
+        }
+    }
+
+    fn spawn_flusher(&self) {
+        let service = self.clone();
+        let spawned = thread::Builder::new()
+            .name("rille-library-events".into())
+            .spawn(move || {
+                while !service.shared.stopping.load(Ordering::Relaxed) {
+                    thread::sleep(FLUSH_INTERVAL);
+                    service.flush();
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::error!(%e, "could not start library event thread");
         }
     }
 
@@ -443,6 +515,29 @@ impl LibraryService {
     }
 }
 
+/// Open the database. One that SQLite cannot read is moved aside (kept for rescue) and a
+/// fresh one started, so a damaged file does not cost the whole library feature. A database
+/// from a newer rille is never touched.
+fn open_or_set_aside(path: &Path) -> Result<Library, DbError> {
+    match Library::open(path) {
+        Err(DbError::Sql(e)) if path.exists() => {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let aside = path.with_extension(format!("db.defekt-{stamp}"));
+            tracing::error!(%e, aside = %aside.display(), "library database unreadable, moved aside");
+            std::fs::rename(path, &aside).map_err(|_| DbError::Sql(e))?;
+            for suffix in ["-wal", "-shm"] {
+                let mut side = path.as_os_str().to_owned();
+                side.push(suffix);
+                let _ = std::fs::remove_file(PathBuf::from(side));
+            }
+            Library::open(path)
+        }
+        other => other,
+    }
+}
+
 fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes)?;
@@ -483,7 +578,6 @@ mod tests {
         assert!(!q.push(1, "/a".into()), "already queued");
         assert!(q.push(2, "/b".into()));
         let (id, _) = q.take().unwrap();
-        assert!(!q.push(id, "/a".into()), "being analysed");
         q.finish(id);
         assert_eq!(
             q.progress(),
@@ -496,10 +590,59 @@ mod tests {
         q.reset_if_idle();
         assert_eq!(q.progress().queued, 2, "one job still waiting");
         let (id, _) = q.take().unwrap();
-        q.finish(id);
+        assert!(!q.finish(id));
         assert!(q.progress().idle());
         q.reset_if_idle();
         assert_eq!(q.progress(), LibraryProgress::default());
+    }
+
+    #[test]
+    fn a_track_queued_while_running_is_analysed_once_more() {
+        let mut q = Queue::default();
+        q.push(7, "/a".into());
+        let (id, _) = q.take().unwrap();
+        // The file changed and was re-imported during the analysis.
+        assert!(q.push(7, "/a".into()));
+        assert!(!q.push(7, "/a".into()), "one rerun is enough");
+        assert!(q.take().is_none(), "never two runs of one track at once");
+        assert!(q.finish(id), "queued again");
+        assert_eq!(q.take().map(|j| j.0), Some(7));
+        assert!(!q.finish(7));
+        assert_eq!(
+            q.progress(),
+            LibraryProgress {
+                importing: false,
+                queued: 2,
+                analyzed: 2
+            }
+        );
+    }
+
+    #[test]
+    fn an_unreadable_database_is_moved_aside_and_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.db");
+        std::fs::write(&path, b"this is not a database at all, just text").unwrap();
+        let lib = open_or_set_aside(&path).unwrap();
+        assert!(lib.tracks().unwrap().is_empty());
+        let kept: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| n.contains("defekt"))
+            .collect();
+        assert_eq!(kept.len(), 1, "the broken file is kept for rescue");
+    }
+
+    #[test]
+    fn a_database_from_a_newer_rille_is_not_set_aside() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("library.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.pragma_update(None, "user_version", 99).unwrap();
+        }
+        assert!(matches!(open_or_set_aside(&path), Err(DbError::TooNew(99))));
+        assert!(path.exists());
     }
 
     #[test]

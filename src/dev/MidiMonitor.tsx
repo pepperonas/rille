@@ -7,7 +7,15 @@ import styles from './MidiMonitor.module.css';
 const MAX_LINES = 400;
 
 /** Developer view: every MIDI message in and out, live. Streams only while open. */
-export function MidiMonitor({ ref, open, onClose }: { ref: Ref<HTMLDialogElement>; open: boolean; onClose: () => void }) {
+export function MidiMonitor({
+  ref,
+  open,
+  onClose,
+}: {
+  ref: Ref<HTMLDialogElement>;
+  open: boolean;
+  onClose: () => void;
+}) {
   const [lines, setLines] = useState<MonitorLine[]>([]);
   const [paused, setPaused] = useState(false);
   const pausedRef = useRef(paused);
@@ -69,7 +77,9 @@ export function MidiMonitor({ ref, open, onClose }: { ref: Ref<HTMLDialogElement
             <span className="numeric">{(l.timeUs / 1000).toFixed(1).padStart(9)} ms</span>
             <span className={styles.dir}>{l.outgoing ? '→' : '←'}</span>
             <span className={`${styles.hex} numeric`}>{l.hex}</span>
-            <span className={styles.meaning}>{l.meaning ?? (l.outgoing ? 'LED/Einstellung' : '')}</span>
+            <span className={styles.meaning}>
+              {l.meaning ?? (l.outgoing ? 'LED/Einstellung' : '')}
+            </span>
           </div>
         ))}
       </div>

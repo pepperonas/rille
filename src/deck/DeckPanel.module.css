@@ -144,6 +144,12 @@
   text-overflow: ellipsis;
 }
 
+.warning {
+  margin: var(--space-1) 0 0;
+  font: var(--type-body-s);
+  color: var(--md-error);
+}
+
 .bpm {
   color: var(--accent);
   font-stretch: var(--font-stretch-emphasized);

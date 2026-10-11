@@ -42,7 +42,9 @@ describe('external links', () => {
     // `*` in a glob crosses dots and slashes: lookalike hosts must not slip through.
     expect(allowed('https://celox.io.evil.example/', patterns)).toBe(false);
     expect(allowed('https://github.com/pepperonas/rille-evil', patterns)).toBe(false);
-    expect(allowed('https://www.paypal.com/donate/?business=someone@else.com', patterns)).toBe(false);
+    expect(allowed('https://www.paypal.com/donate/?business=someone@else.com', patterns)).toBe(
+      false,
+    );
   });
 
   it('README and app use the same donate and rating links', () => {

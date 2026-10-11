@@ -90,7 +90,10 @@ export function Transport({ deck }: { deck: Deck }) {
           {showPlaying ? (
             <path fill="currentColor" d="M6 5h4v14H6zM14 5h4v14h-4z" />
           ) : (
-            <path fill="currentColor" d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z" />
+            <path
+              fill="currentColor"
+              d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"
+            />
           )}
         </svg>
       </motion.button>

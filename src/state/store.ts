@@ -11,7 +11,13 @@ import { initialLibrary, type LibraryState } from '../library/model';
 
 export type DeckInfo =
   | { status: 'empty' }
-  | { status: 'loading'; requestId: number | null; title: string }
+  | {
+      status: 'loading';
+      requestId: number | null;
+      /** Which request of this app session; ties `loadAccepted` to its own request. */
+      seq: number;
+      title: string;
+    }
   | {
       status: 'ready';
       trackId: number;
@@ -19,6 +25,8 @@ export type DeckInfo =
       artist: string | null;
       bpm: number | null;
       durationSecs: number;
+      /** Plays, but not all of the file could be decoded. */
+      warning: string | null;
     }
   | { status: 'error'; title: string; message: string };
 
@@ -43,13 +51,25 @@ export const initialState: AppState = {
 
 // Pure transitions, unit-tested.
 
-export function loadRequested(s: AppState, deck: Deck, title: string): AppState {
-  return { ...s, decks: { ...s.decks, [deck]: { status: 'loading', requestId: null, title } } };
+let lastSeq = 0;
+
+/** A fresh sequence number for a load request. */
+export function nextLoadSeq(): number {
+  return ++lastSeq;
 }
 
-export function loadAccepted(s: AppState, deck: Deck, requestId: number): AppState {
+export function loadRequested(s: AppState, deck: Deck, title: string, seq = 0): AppState {
+  return {
+    ...s,
+    decks: { ...s.decks, [deck]: { status: 'loading', requestId: null, seq, title } },
+  };
+}
+
+/** The backend took the request and named its id. A late answer to an older request (two
+ *  loads on one deck within one round trip) must not claim the newer one. */
+export function loadAccepted(s: AppState, deck: Deck, requestId: number, seq = 0): AppState {
   const d = s.decks[deck];
-  if (d.status !== 'loading') return s;
+  if (d.status !== 'loading' || d.seq !== seq) return s;
   return { ...s, decks: { ...s.decks, [deck]: { ...d, requestId } } };
 }
 
@@ -72,6 +92,7 @@ export function loaded(s: AppState, e: DeckLoaded): AppState {
     artist: e.artist ?? null,
     bpm: e.bpm ?? null,
     durationSecs: e.durationSecs,
+    warning: null,
   };
   return { ...s, decks: { ...s.decks, [e.deck]: info } };
 }
@@ -81,6 +102,12 @@ export function loadFailed(s: AppState, e: DeckLoadFailed): AppState {
   if (!awaited(d, e.trackId)) return s;
   const info: DeckInfo = { status: 'error', title: e.title, message: e.message };
   return { ...s, decks: { ...s.decks, [e.deck]: info } };
+}
+
+export function loadWarning(s: AppState, e: DeckLoadFailed): AppState {
+  const d = s.decks[e.deck];
+  if (d.status !== 'ready' || d.trackId !== e.trackId) return s;
+  return { ...s, decks: { ...s.decks, [e.deck]: { ...d, warning: e.message } } };
 }
 
 export function unloaded(s: AppState, deck: Deck): AppState {

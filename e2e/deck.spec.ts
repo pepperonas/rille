@@ -139,7 +139,10 @@ test('EQ kill, filter and transition FX from the mixer', async ({ page }) => {
   const kill = page.getByRole('button', { name: 'Bässe Kanal 1 stummschalten (Kill)' });
   await kill.click();
   await expect(kill).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('slider', { name: 'Bässe Kanal 1' })).toHaveAttribute('aria-valuetext', 'Kill');
+  await expect(page.getByRole('slider', { name: 'Bässe Kanal 1' })).toHaveAttribute(
+    'aria-valuetext',
+    'Kill',
+  );
 
   const filter = page.getByRole('slider', { name: 'Filter Kanal 2' });
   await filter.focus();
@@ -290,6 +293,9 @@ test('tempo and keylock survive loading the next track', async ({ page }) => {
   await a.getByRole('button', { name: 'Keylock' }).click();
   await a.getByRole('button', { name: 'Deck 1 auswerfen' }).click();
   await a.getByRole('button', { name: 'Demo-Track laden' }).click();
-  await expect(a.getByRole('slider', { name: 'Tempo' })).toHaveAttribute('aria-valuetext', '−0.40 %');
+  await expect(a.getByRole('slider', { name: 'Tempo' })).toHaveAttribute(
+    'aria-valuetext',
+    '−0.40 %',
+  );
   await expect(a.getByRole('button', { name: 'Keylock' })).toHaveAttribute('aria-pressed', 'true');
 });

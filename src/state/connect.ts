@@ -5,22 +5,27 @@ import {
   loadAccepted,
   loadFailed,
   loadRequested,
+  loadWarning,
+  nextLoadSeq,
   loaded,
   store,
   unloaded,
   updateLibrary,
 } from './store';
-import { importPaths, loadSelected, moveSelected } from '../library/actions';
-import { mergeTracks } from '../library/model';
+import { importPaths, libraryError, loadSelected, moveSelected } from '../library/actions';
+import { mergeTracks, mergeUnder } from '../library/model';
 
 /** Wire backend streams into the store. Returns a cleanup function. */
 export async function connectBackend(): Promise<() => void> {
+  // Events win over the initial fetch: it may have been read before them.
+  let progressSeen = false;
   const offs = await Promise.all([
     backend.subscribeState((frame) =>
       store.update((s) => frameReceived(s, frame, performance.now())),
     ),
     backend.on('deck-loaded', (e) => store.update((s) => loaded(s, e))),
     backend.on('deck-load-failed', (e) => store.update((s) => loadFailed(s, e))),
+    backend.on('deck-load-warning', (e) => store.update((s) => loadWarning(s, e))),
     backend.on('audio-changed', (audio) => store.update((s) => ({ ...s, audio }))),
     backend.on('controller-changed', (controller) => store.update((s) => ({ ...s, controller }))),
     backend.on('library-tracks', (tracks) =>
@@ -28,9 +33,13 @@ export async function connectBackend(): Promise<() => void> {
         updateLibrary(s, (l) => ({ ...l, tracks: mergeTracks(l.tracks, tracks) })),
       ),
     ),
-    backend.on('library-progress', (progress) =>
-      store.update((s) => updateLibrary(s, (l) => ({ ...l, progress }))),
-    ),
+    backend.on('library-progress', (progress) => {
+      progressSeen = true;
+      // A running import means the library works again; drop an old error.
+      store.update((s) =>
+        updateLibrary(s, (l) => ({ ...l, progress, error: progress.importing ? null : l.error })),
+      );
+    }),
     backend.on('library-scroll', (rows) => moveSelected(rows)),
     backend.on('library-load', (deck) => loadSelected(deck)),
     backend.onFileDrop(({ paths, x, y }) => {
@@ -50,13 +59,13 @@ export async function connectBackend(): Promise<() => void> {
       store.update((s) =>
         updateLibrary(s, (l) => ({
           ...l,
-          tracks: mergeTracks(l.tracks, tracks),
-          progress,
+          tracks: mergeUnder(l.tracks, tracks),
+          progress: progressSeen ? l.progress : progress,
           ready: true,
         })),
       ),
     (e: unknown) => {
-      console.error('library unavailable', e);
+      libraryError(e);
       store.update((s) => updateLibrary(s, (l) => ({ ...l, ready: true })));
     },
   );
@@ -79,10 +88,11 @@ export async function loadIntoDeck(deck: Deck, path: string): Promise<void> {
       .split('/')
       .pop()
       ?.replace(/\.[^.]+$/, '') ?? path;
-  store.update((s) => loadRequested(s, deck, title));
+  const seq = nextLoadSeq();
+  store.update((s) => loadRequested(s, deck, title, seq));
   try {
     const id = await backend.loadFile(deck, path);
-    store.update((s) => loadAccepted(s, deck, id));
+    store.update((s) => loadAccepted(s, deck, id, seq));
   } catch (e) {
     store.update((s) =>
       loadFailed(s, {

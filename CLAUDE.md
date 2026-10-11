@@ -78,6 +78,10 @@ Das Frontend rechnet nichts Audio-Relevantes.
   (`sizes.libraryRow`, die Virtualisierung rechnet damit) – ein Test hält beide gleich.
 - Library-Ziehen nutzt Pointer Events, nicht HTML5-Drag-and-Drop (das kollidiert mit dem
   nativen Finder-Drop). Das Deck unter dem Zeiger bekommt `data-drop-target`.
+- Library-Ereignisse gehen gebündelt raus (`FLUSH_INTERVAL` 250 ms, Tracks vor Fortschritt);
+  der erste Abruf beim Start wird *unter* die Ereignisse gemischt (`mergeUnder`), nie darüber.
+- Ein Track, der während seiner Analyse erneut importiert wird, läuft danach noch einmal
+  (`Queue::rerun`) – sonst bliebe das Ergebnis der alten Datei stehen.
 - BPM: lieber „kein Tempo“ als ein geratenes. Neue Heuristiken immer gegen Rauschen und
   Zufallsschläge prüfen (`bpm.rs`-Tests) und mit `examples/analyze` auf echten Tracks.
 - **CoreMIDI sieht neue Geräte nur, wenn der erste MIDI-Client des Prozesses auf einem Thread

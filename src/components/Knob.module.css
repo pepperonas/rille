@@ -47,7 +47,11 @@
 }
 
 .knob:hover .cap {
-  fill: color-mix(in srgb, var(--md-on-surface) calc(var(--state-hover) * 100%), var(--md-surface-container-highest));
+  fill: color-mix(
+    in srgb,
+    var(--md-on-surface) calc(var(--state-hover) * 100%),
+    var(--md-surface-container-highest)
+  );
 }
 
 .pointer {
