@@ -44,6 +44,9 @@ export function DisplaySettings() {
       </label>
       <label className={styles.field}>
         <span className={styles.label}>Tempo-Bereich beim Start</span>
+        <span className={styles.hint}>
+          Gilt ab dem nächsten Start; spielende Decks behalten ihren Bereich.
+        </span>
         <select
           className={styles.select}
           value={prefs.tempoRange}

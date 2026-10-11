@@ -12,6 +12,8 @@ export function useShortcuts() {
       releases.forEach((r) => r());
     };
     const onDown = (e: KeyboardEvent) => {
+      // macOS sends no key up for letters released while ⌘ is down: let go of everything.
+      if (e.metaKey) releaseAll();
       if (e.defaultPrevented) return;
       const hit = findBinding(SHORTCUTS, e);
       if (!hit) return;
@@ -24,6 +26,10 @@ export function useShortcuts() {
       if (binding.release) held.set(e.code, binding.release);
     };
     const onUp = (e: KeyboardEvent) => {
+      if (e.key === 'Meta') {
+        releaseAll();
+        return;
+      }
       const release = held.get(e.code);
       if (!release) return;
       held.delete(e.code);

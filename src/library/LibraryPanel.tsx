@@ -208,7 +208,10 @@ function TrackList({ rows, selected, reveal, onDragStart }: ListProps) {
       '2': () => loadSelected('b' as Deck),
     };
     const action = keys[e.key];
-    if (!action || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // The list owns the digit row (1 / 2 load); with Shift they must not reach the pads.
+    if (!action && e.code.startsWith('Digit')) e.preventDefault();
+    if (!action) return;
     e.preventDefault();
     action();
   };

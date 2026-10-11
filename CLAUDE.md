@@ -158,6 +158,11 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - Einstellungen (Theme, Start-Tempobereich, Crossfader-Kurve) liegen im `localStorage`
   (`rille.prefs`, `src/settings/prefs.ts`); das Theme wird vor dem ersten Render gesetzt und
   im Tauri-Fenster per `setTheme` gespiegelt (Capability `core:window:allow-set-theme`).
+- Playwright `press('Shift+1')` schickt `key: '1'` mit Shift, nicht `!` – für Shift-Ziffern
+  `Shift+DigitN` nehmen. macOS schickt kein keyup für Buchstaben, die bei gedrücktem ⌘
+  losgelassen werden; gehaltene Kürzel lassen deshalb bei ⌘ los.
+- Der Tempo-Bereich aus den Einstellungen gilt nur beim Start – live gesetzt würde er ein
+  spielendes Deck umstimmen (`set_range` behält die Fader-Stellung, nicht die Rate).
 - Mock-Parameter: `?demo` (zwei spielende Decks), `?noaudio` (kein Ausgabegerät).
 
 ## Doku, Badges, Screenshots

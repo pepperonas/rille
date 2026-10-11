@@ -159,7 +159,8 @@ test('start tempo range and crossfader curve are saved', async ({ page }) => {
   await page.getByRole('combobox', { name: 'Crossfader-Kurve' }).selectOption('cut');
   await page.keyboard.press('Escape');
   await loadDemo(page, 'a');
-  await expect(deck(page, 'a').getByRole('button', { name: /^Tempobereich ±16/ })).toBeVisible();
+  // The start range waits for the next start: a playing deck must not be retuned.
+  await expect(deck(page, 'a').getByRole('button', { name: /^Tempobereich ±10/ })).toBeVisible();
   await expect(page.getByRole('radio', { name: 'Cut' })).toHaveAttribute('aria-checked', 'true');
 
   // The mixer chips change the saved curve too.
@@ -181,4 +182,30 @@ test('keys the track list uses do not also hit the pads', async ({ page }) => {
   await expect(deck(page, 'b').getByRole('heading')).not.toHaveText('Neon Avenue (Club Edit)');
   await page.waitForTimeout(400);
   await expect(a.getByRole('button', { name: 'Hot Cue 2 setzen' })).toBeVisible();
+});
+
+test('Shift + digit in the track list does not delete a hot cue', async ({ page }) => {
+  await page.goto('/?demo');
+  const a = deck(page, 'a');
+  await a.getByRole('radio', { name: 'Hot Cue' }).click();
+  await a.getByRole('button', { name: 'Hot Cue 3 setzen' }).click();
+  await expect(a.getByRole('button', { name: 'Hot Cue 3 anspringen' })).toBeVisible();
+  await page.getByRole('listbox', { name: 'Tracks' }).focus();
+  // A digit the list does not use: with Shift it would delete pad 3 of deck 1.
+  await page.keyboard.press('Shift+Digit3');
+  await page.waitForTimeout(400);
+  await expect(a.getByRole('button', { name: 'Hot Cue 3 anspringen' })).toBeVisible();
+});
+
+test('a held key lets go when ⌘ comes in between', async ({ page }) => {
+  await page.goto('/');
+  await loadDemo(page, 'a');
+  const a = deck(page, 'a');
+  await page.keyboard.down('d');
+  await expect(a.getByLabel('Gespielt')).not.toHaveText('0:00.0', { timeout: 2000 });
+  // macOS swallows the key up of a letter released while ⌘ is down.
+  await page.keyboard.down('Meta');
+  await expect(a.getByLabel('Gespielt')).toHaveText('0:00.0');
+  await page.keyboard.up('Meta');
+  await page.keyboard.up('d');
 });

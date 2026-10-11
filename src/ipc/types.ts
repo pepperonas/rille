@@ -183,6 +183,8 @@ export type DeckAction =
   | { type: 'reverse'; on: boolean }
   | { type: 'sync' }
   | { type: 'syncLock'; on: boolean }
+  /** Flip the lock in the engine; race-free for keys pressed faster than frames arrive. */
+  | { type: 'toggleSyncLock' }
   | { type: 'beatLoop'; beats: number }
   | { type: 'loopExit' }
   | { type: 'beatJump'; beats: number }
@@ -201,6 +203,7 @@ export type MixerAction =
   | { type: 'transitionFx' }
   | { type: 'cycleTransitionFx' }
   | { type: 'headphoneCue'; deck: Deck; on: boolean }
+  | { type: 'toggleHeadphoneCue'; deck: Deck }
   | { type: 'masterCue'; on: boolean }
   | { type: 'cueMix'; value: number }
   | { type: 'cueLevel'; value: number };

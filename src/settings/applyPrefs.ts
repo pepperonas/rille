@@ -24,21 +24,23 @@ function applyTheme(pref: ThemePref) {
   paintTheme(pref);
 }
 
-function applyEngine(p: Prefs, changed: Partial<Prefs>) {
-  if ('tempoRange' in changed) {
-    for (const deck of ['a', 'b'] as const) {
-      backend.deck(deck, { type: 'tempoRange', range: p.tempoRange });
-    }
-  }
-  if ('curve' in changed) backend.mixer({ type: 'curve', curve: p.curve });
-}
-
-/** Load the saved preferences and apply all of them. Returns a cleanup function. */
-export function initPrefs(): () => void {
+/** Theme first and as early as possible: the native window must match before the first paint
+ *  of a light UI, or the vibrancy shows dark material under it. */
+export function initTheme() {
   const prefs = loadPrefs();
   store.update((s) => ({ ...s, prefs }));
   applyTheme(prefs.theme);
-  applyEngine(prefs, prefs);
+}
+
+/** Apply the saved preferences to the engine and follow the system theme. The start tempo
+ *  range is applied here only: changing it later must not retune a deck that is playing.
+ *  Returns a cleanup function. */
+export function initPrefs(): () => void {
+  const { prefs } = store.get();
+  for (const deck of ['a', 'b'] as const) {
+    backend.deck(deck, { type: 'tempoRange', range: prefs.tempoRange });
+  }
+  backend.mixer({ type: 'curve', curve: prefs.curve });
   if (typeof matchMedia !== 'function') return () => undefined;
   const media = matchMedia(DARK_QUERY);
   const onChange = () => {
@@ -54,5 +56,6 @@ export function setPrefs(change: Partial<Prefs>) {
   store.update((s) => ({ ...s, prefs: next }));
   savePrefs(next);
   if (change.theme !== undefined) applyTheme(next.theme);
-  applyEngine(next, change);
+  // The start tempo range waits for the next start (see initPrefs).
+  if (change.curve !== undefined) backend.mixer({ type: 'curve', curve: next.curve });
 }

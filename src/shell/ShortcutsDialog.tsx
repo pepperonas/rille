@@ -38,8 +38,9 @@ export function ShortcutsDialog({ ref }: { ref: Ref<HTMLDialogElement> }) {
         ))}
       </div>
       <p className={styles.hint}>
-        Kürzel ruhen, solange ein Textfeld oder ein Dialog den Fokus hat. Alles andere erreichst du
-        mit Tab; Regler reagieren auf die Pfeiltasten.
+        Kürzel ruhen, solange ein Textfeld oder ein Fenster wie die Einstellungen offen ist (nur
+        ⌘⌥M geht immer); in der Trackliste gehören die Zifferntasten der Liste. Alles andere
+        erreichst du mit Tab; Regler reagieren auf die Pfeiltasten.
       </p>
       <form method="dialog" className={styles.actions}>
         <button type="submit" className={styles.textButton}>

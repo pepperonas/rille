@@ -401,10 +401,11 @@ export function createMockBackend(): Backend {
         if (other) syncTo(d, other, other.playing);
         break;
       }
-      case 'syncLock': {
-        d.syncLock = action.on;
+      case 'syncLock':
+      case 'toggleSyncLock': {
+        d.syncLock = action.type === 'syncLock' ? action.on : !d.syncLock;
         const other = decks[decks[0] === d ? 1 : 0];
-        if (action.on && other) syncTo(d, other, other.playing);
+        if (d.syncLock && other) syncTo(d, other, other.playing);
         break;
       }
       case 'beatLoop': {
@@ -537,6 +538,9 @@ export function createMockBackend(): Backend {
         break;
       case 'headphoneCue':
         state.cue[idx(action.deck)] = action.on;
+        break;
+      case 'toggleHeadphoneCue':
+        state.cue[idx(action.deck)] = !state.cue[idx(action.deck)];
         break;
       case 'masterCue':
         state.masterCue = action.on;

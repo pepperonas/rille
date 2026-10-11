@@ -33,8 +33,6 @@ export interface ShortcutRow {
   bindings: Binding[];
 }
 
-const deckIndex = (deck: Deck) => (deck === 'a' ? 0 : 1);
-const frameDeck = (deck: Deck) => store.get().frame?.decks[deckIndex(deck)];
 
 const CROSSFADER_STEP = 0.1;
 
@@ -96,10 +94,7 @@ function deckRows(deck: Deck, k: DeckKeys): ShortcutRow[] {
         {
           code: k.sync,
           run: (shift) =>
-            backend.deck(
-              deck,
-              shift ? { type: 'syncLock', on: !frameDeck(deck)?.syncLock } : { type: 'sync' },
-            ),
+            backend.deck(deck, shift ? { type: 'toggleSyncLock' } : { type: 'sync' }),
         },
       ],
     },
@@ -111,12 +106,7 @@ function deckRows(deck: Deck, k: DeckKeys): ShortcutRow[] {
         {
           code: k.phones,
           shift: false,
-          run: () =>
-            backend.mixer({
-              type: 'headphoneCue',
-              deck,
-              on: !store.get().frame?.cue[deckIndex(deck)],
-            }),
+          run: () => backend.mixer({ type: 'toggleHeadphoneCue', deck }),
         },
       ],
     },

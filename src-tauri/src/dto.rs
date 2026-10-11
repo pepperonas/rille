@@ -164,6 +164,8 @@ pub enum DeckAction {
     SyncLock {
         on: bool,
     },
+    /// Flip the lock in the engine (keyboard: no stale frame involved).
+    ToggleSyncLock,
     BeatLoop {
         beats: f32,
     },
@@ -222,6 +224,7 @@ impl From<DeckAction> for DeckCommand {
             DeckAction::Reverse { on } => DeckCommand::Reverse(on),
             DeckAction::Sync => DeckCommand::Sync,
             DeckAction::SyncLock { on } => DeckCommand::SyncLock(on),
+            DeckAction::ToggleSyncLock => DeckCommand::ToggleSyncLock,
             DeckAction::BeatLoop { beats } => DeckCommand::BeatLoop(beats),
             DeckAction::LoopExit => DeckCommand::LoopExit,
             DeckAction::BeatJump { beats } => DeckCommand::BeatJump(beats),
@@ -270,6 +273,9 @@ pub enum MixerAction {
     HeadphoneCue {
         deck: Deck,
         on: bool,
+    },
+    ToggleHeadphoneCue {
+        deck: Deck,
     },
     MasterCue {
         on: bool,
@@ -330,6 +336,9 @@ impl From<MixerAction> for MixerCommand {
             MixerAction::TransitionFx => MixerCommand::TransitionFx,
             MixerAction::CycleTransitionFx => MixerCommand::CycleTransitionFx,
             MixerAction::HeadphoneCue { deck, on } => MixerCommand::HeadphoneCue(deck.into(), on),
+            MixerAction::ToggleHeadphoneCue { deck } => {
+                MixerCommand::ToggleHeadphoneCue(deck.into())
+            }
             MixerAction::MasterCue { on } => MixerCommand::MasterCue(on),
             MixerAction::CueMix { value } => MixerCommand::CueMix(value),
             MixerAction::CueLevel { value } => MixerCommand::CueLevel(value),
@@ -591,6 +600,7 @@ mod tests {
                 r#"{"type":"syncLock","on":true}"#,
                 DeckCommand::SyncLock(true),
             ),
+            (r#"{"type":"toggleSyncLock"}"#, DeckCommand::ToggleSyncLock),
             (
                 r#"{"type":"beatLoop","beats":0.25}"#,
                 DeckCommand::BeatLoop(0.25),
