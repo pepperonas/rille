@@ -231,6 +231,8 @@ mod tests {
 
     #[test]
     fn command_stays_small() {
-        assert!(std::mem::size_of::<Command>() <= 24);
+        // 32 bytes since `SetGrid` carries two f64 (an f32 grid drifts measurably over a
+        // track). A full queue of 1024 commands is then 32 KB.
+        assert!(std::mem::size_of::<Command>() <= 32);
     }
 }
