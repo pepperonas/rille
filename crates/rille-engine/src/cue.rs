@@ -4,6 +4,9 @@
 //! PI controller derives from how full the ring is. Nothing here allocates or locks after
 //! construction.
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use rtrb::{Consumer, Producer, RingBuffer};
 
 /// Ring capacity in stereo frames (≈ 340 ms at 48 kHz): far more than the target fill.
@@ -18,6 +21,11 @@ const KP: f64 = 0.002;
 /// Smoothing of the measured fill per callback (~1 s): the block sawtooth must not steer the
 /// ratio. Kept well below the control time constant, so the loop cannot oscillate.
 const FILL_SMOOTHING: f64 = 0.01;
+/// Integral time in P-loop time constants: removes the steady fill offset a large drift would
+/// leave (1000 ppm would otherwise sit at half the target), slow enough not to swing.
+const INTEGRAL_TAUS: f64 = 2.0;
+/// Rate the integral time is measured against (exactness does not matter).
+const NOMINAL_RATE: f64 = 48_000.0;
 
 /// Engine and reader ends of the cue ring.
 pub fn cue_ring() -> (Producer<f32>, Consumer<f32>) {
@@ -55,8 +63,13 @@ impl FrameSource for Consumer<f32> {
         Some([self.pop().ok()?, self.pop().ok()?])
     }
 
+    /// Whole frames only: the engine may be between the left and the right sample of a frame,
+    /// and dropping a lone left would swap the channels for good.
     fn clear(&mut self) {
-        while self.pop().is_ok() {}
+        while self.slots() >= 2 {
+            let _ = self.pop();
+            let _ = self.pop();
+        }
     }
 }
 
@@ -72,7 +85,10 @@ pub struct DriftReader<S: FrameSource> {
     ratio: f64,
     /// Waiting for the ring to fill before playing (start, or after running dry).
     priming: bool,
-    underruns: u32,
+    /// Sum of fill error × seconds (integral action).
+    integral: f64,
+    /// Shared with the control side: read without touching the audio callback's slot.
+    underruns: Arc<AtomicU32>,
 }
 
 impl<S: FrameSource> DriftReader<S> {
@@ -86,8 +102,14 @@ impl<S: FrameSource> DriftReader<S> {
             fill: target as f64,
             ratio: 1.0,
             priming: true,
-            underruns: 0,
+            integral: 0.0,
+            underruns: Arc::new(AtomicU32::new(0)),
         }
+    }
+
+    /// Dropouts since the last restart, readable from any thread.
+    pub fn underrun_counter(&self) -> Arc<AtomicU32> {
+        self.underruns.clone()
     }
 
     /// Start over (new device): drop the backlog and fill up again.
@@ -99,6 +121,8 @@ impl<S: FrameSource> DriftReader<S> {
         self.fill = self.target;
         self.ratio = 1.0;
         self.priming = true;
+        self.integral = 0.0;
+        self.underruns.store(0, Ordering::Relaxed);
     }
 
     /// Current input/output ratio (1 + correction).
@@ -107,7 +131,7 @@ impl<S: FrameSource> DriftReader<S> {
     }
 
     pub fn underruns(&self) -> u32 {
-        self.underruns
+        self.underruns.load(Ordering::Relaxed)
     }
 
     pub fn fill(&self) -> usize {
@@ -120,24 +144,38 @@ impl<S: FrameSource> DriftReader<S> {
         if channels == 0 {
             return;
         }
-        let available = self.source.frames_available() as f64;
+        let mut available = self.source.frames_available() as f64;
         if self.priming {
             if available < self.target {
                 return;
             }
+            // Start at the target, not with whatever piled up meanwhile (a device switch can
+            // leave hundreds of milliseconds): that backlog would otherwise take the ±0.5 %
+            // correction a minute to drain, all of it extra headphone latency.
+            while available > self.target + 1.0 && self.source.pop_frame().is_some() {
+                available -= 1.0;
+            }
             self.priming = false;
             self.fill = available;
         }
+        let frames = (out.len() / channels) as f64;
         self.fill += FILL_SMOOTHING * (available - self.fill);
+        // Relative to the target: with big blocks the measured fill jumps by a whole block as
+        // the two devices' block phases pass each other, and that must not swing the ratio.
+        // The loop is then slower (τ = target / (rate · KP)); the integral follows at 2 τ.
         let error = (self.fill - self.target) / self.target;
-        self.ratio = 1.0 + (KP * error).clamp(-MAX_CORRECTION, MAX_CORRECTION);
+        let integral_seconds = INTEGRAL_TAUS * self.target / (NOMINAL_RATE * KP);
+        let limit = MAX_CORRECTION / KP * integral_seconds;
+        self.integral = (self.integral + error * frames / NOMINAL_RATE).clamp(-limit, limit);
+        let correction = KP * (error + self.integral / integral_seconds);
+        self.ratio = 1.0 + correction.clamp(-MAX_CORRECTION, MAX_CORRECTION);
 
         for frame in out.chunks_exact_mut(channels) {
             self.frac += self.ratio;
             while self.frac >= 1.0 {
                 let Some(next) = self.source.pop_frame() else {
                     // Ran dry: silence for the rest, then wait for the ring to fill again.
-                    self.underruns += 1;
+                    self.underruns.fetch_add(1, Ordering::Relaxed);
                     self.priming = true;
                     self.frac = 0.0;
                     return;
@@ -296,6 +334,60 @@ mod tests {
     }
 
     #[test]
+    fn a_large_drift_is_followed_too() {
+        // 1000 ppm (a cheap Bluetooth clock): without integral action the fill would sit far
+        // below the target and run dry now and then.
+        let (r, (lo, _), _, ratios) = simulate(1_000.0, 256, 512, 300.0, 120.0);
+        assert_eq!(r.underruns(), 0);
+        assert!(lo > 128, "fill down to {lo}");
+        assert!(
+            (ratios.1 - 1.0 / 1.001).abs() < 0.000_05,
+            "mean {}",
+            ratios.1
+        );
+    }
+
+    #[test]
+    fn stable_with_very_different_block_sizes() {
+        // No dropouts and an inaudible speed wobble (< 0.1 % ≈ 1.7 cents) for odd pairings.
+        // With equal big blocks the two block phases pass each other slowly (every ~140 s at
+        // 300 ppm), the measured fill makes a slow 2048-frame sawtooth and the ratio follows
+        // it: that is the real fill moving, not the loop swinging.
+        for (engine, device, ppm) in [
+            (64, 2_048, 200.0),
+            (1_024, 64, -200.0),
+            (2_048, 2_048, 300.0),
+        ] {
+            let (r, (lo, _), step, (min, _, max)) = simulate(ppm, engine, device, 360.0, 180.0);
+            let expected = 1.0 / (1.0 + ppm * 1e-6);
+            assert_eq!(r.underruns(), 0, "{engine}/{device}");
+            assert!(lo > 0, "{engine}/{device}: fill down to {lo}");
+            assert!(
+                (min - expected).abs() < 0.001 && (max - expected).abs() < 0.001,
+                "{engine}/{device}: ratio {min}..{max}"
+            );
+            assert!(step < 0.015, "{engine}/{device}: step {step}");
+        }
+    }
+
+    #[test]
+    fn a_backlog_is_dropped_when_playing_starts() {
+        let model = Model {
+            frames: VecDeque::new(),
+            phase: 0.0,
+        };
+        let mut r = DriftReader::new(model, 1_024);
+        r.source.produce(15_000); // a device switch left 300 ms in the ring
+        let mut out = vec![0.0f32; 256 * 2];
+        r.render(&mut out, 2);
+        assert!(
+            r.fill() <= 1_024,
+            "starts at the target, not 300 ms late: {}",
+            r.fill()
+        );
+    }
+
+    #[test]
     fn running_dry_waits_for_a_full_ring_before_playing_again() {
         let model = Model {
             frames: VecDeque::new(),
@@ -343,5 +435,15 @@ mod tests {
         );
         r.restart(128);
         assert_eq!(r.fill(), 0);
+    }
+
+    #[test]
+    fn clearing_never_splits_a_frame() {
+        // The engine has pushed the left sample of a frame but not yet the right one.
+        let (mut tx, mut rx) = cue_ring();
+        assert!(tx.push(0.1).is_ok());
+        rx.clear();
+        assert!(tx.push(0.2).is_ok());
+        assert_eq!(rx.pop_frame(), Some([0.1, 0.2]), "left stays left");
     }
 }

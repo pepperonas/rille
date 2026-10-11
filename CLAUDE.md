@@ -100,9 +100,14 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - Vom Nutzer korrigierte Grids (`grid_user`, Schema v4) überschreibt keine Analyse; erst eine
   geänderte Datei setzt das zurück.
 - **Kopfhörer auf zweitem Gerät:** Engine → `cue_tx`-Ring → `DriftReader` im Callback des
-  Zweitgeräts (eigener `CueSlot`, überlebt Stream-Wechsel). Der Regler ist reiner P-Anteil
-  (τ ≈ 10 s); die Rate wandert um bis zu 0,03 %, weil die Blockphase beider Geräte wandert –
-  das ist echt, nicht Schwingung (unter 1 Cent, unhörbar). Ein Integrator brachte Schwingen.
+  Zweitgeräts (eigener `CueSlot`, überlebt Stream-Wechsel). Regler: P auf den Füllstand relativ
+  zum Ziel (τ = Ziel / (Rate · KP)), I mit 2 τ – ein schnellerer Integrator schwingt. Die Rate
+  wandert um bis zu 0,1 %, weil die Blockphasen beider Geräte gegeneinander wandern; das ist
+  der echte Füllstand, kein Schwingen (unter 2 Cent, unhörbar).
+- Kopfhörer umschalten: Route aus → alten Stream verwerfen → neues Gerät *ohne* gehaltene
+  Sperre öffnen → Route an (unter der `cue`-Sperre). `cue_switch` serialisiert ganze Wechsel.
+- `should_send` (Bridge) vergleicht den ganzen Snapshot ohne Uhr – Feld-für-Feld-Listen
+  vergessen neue Felder.
 - Lock-Reihenfolge im AudioService: `output` vor `cue`, nie beide gleichzeitig.
 - `Command` ist 32 Byte groß, seit `SetGrid` zwei `f64` trägt (ein `f32`-Grid driftet).
 - In Playwright „Cue“ immer mit `exact: true` suchen: die Hot-Cue-Pads heißen „Hot Cue n …“.

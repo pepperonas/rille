@@ -6,7 +6,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
@@ -110,7 +110,11 @@ struct Shared {
     deck_tracks: [Mutex<Option<DeckTrack>>; 2],
     /// The headphone reader of a second device (survives stream rebuilds).
     cue_slot: Option<CueSlot>,
+    /// Dropouts of the headphone reader, read without touching the callback's slot.
+    cue_underruns: Arc<AtomicU32>,
     cue: Mutex<CueState>,
+    /// Held for a whole headphone switch (never by the bridge).
+    cue_switch: Mutex<()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -201,9 +205,13 @@ impl AudioService {
     pub fn start(notify: Notify) -> AudioService {
         let sample_rate = pick_engine_rate(&output::device_rates(None));
         let (engine, mut handle) = engine_pair(sample_rate, MAX_BLOCK);
-        let cue_slot = handle
+        let reader = handle
             .take_cue_reader()
-            .map(|reader| CueSlot::new(DriftReader::new(reader, cue_target(0, 0))));
+            .map(|reader| DriftReader::new(reader, cue_target(0, 0)));
+        let cue_underruns = reader
+            .as_ref()
+            .map_or_else(|| Arc::new(AtomicU32::new(0)), |r| r.underrun_counter());
+        let cue_slot = reader.map(CueSlot::new);
         let (tx_a, rx_a) = mpsc::channel();
         let (tx_b, rx_b) = mpsc::channel();
         let service = AudioService {
@@ -227,6 +235,8 @@ impl AudioService {
                 notify,
                 deck_tracks: [Mutex::new(None), Mutex::new(None)],
                 cue_slot,
+                cue_underruns,
+                cue_switch: Mutex::new(()),
                 cue: Mutex::new(CueState {
                     stream: None,
                     setting: CueSetting::Off,
@@ -340,12 +350,7 @@ impl AudioService {
     }
 
     fn cue_status(&self) -> CueStatus {
-        let underruns = self
-            .shared
-            .cue_slot
-            .as_ref()
-            .and_then(|slot| slot.try_with(|r| r.underruns()))
-            .unwrap_or(0);
+        let underruns = self.shared.cue_underruns.load(Ordering::Relaxed);
         let cue = lock(&self.shared.cue);
         let mut status = CueStatus {
             setting: cue.setting.clone(),
@@ -369,49 +374,79 @@ impl AudioService {
         status
     }
 
-    /// Route the headphones. A second device is opened first; only when that worked does the
-    /// engine start writing the ring. Failing leaves the master untouched.
+    /// Route the headphones. The ring stops first, a second device is opened without holding
+    /// any lock the bridge needs, and only a working stream starts the ring again. Failing
+    /// leaves the master untouched.
     pub fn set_cue(&self, setting: CueSetting) -> Result<AudioStatus, String> {
-        // Main output facts first (output lock), then the cue state (cue lock).
-        let (main_channels, main_buffer) = {
+        // One switch at a time (user, recovery, main-output change). The bridge never takes
+        // this lock, so it keeps sending frames while a device opens.
+        let _switching = lock(&self.shared.cue_switch);
+        let main = {
             let out = lock(&self.shared.output);
-            let channels = out.stream.as_ref().map_or(0, |s| s.info.channels);
-            (channels, out.request.buffer_frames)
+            MainFacts {
+                channels: out.stream.as_ref().map_or(0, |s| s.info.channels),
+                // The size the device actually uses, else the requested one.
+                buffer: out.stream.as_ref().map_or(out.request.buffer_frames, |s| {
+                    s.info
+                        .buffer_frames
+                        .unwrap_or_else(|| s.stats.last_callback_frames.load(Ordering::Relaxed))
+                }),
+                device_id: out.stream.as_ref().map(|s| s.info.device_id.clone()),
+                default_device: out.request.device_id.is_none(),
+            }
         };
-        let mut cue = lock(&self.shared.cue);
-        cue.stream = None;
-        cue.setting = setting.clone();
-        cue.error = None;
-        let route = match &setting {
-            CueSetting::Off => CueRoute::Off,
-            CueSetting::Channels34 if main_channels >= 4 => CueRoute::Channels34,
-            CueSetting::Channels34 => {
-                cue.error = Some(
+        // Stop feeding the ring before the old reader goes away.
+        self.send(Command::Mixer(MixerCommand::CueRoute(CueRoute::Off)));
+        let old = {
+            let mut cue = lock(&self.shared.cue);
+            cue.active = false;
+            cue.stream.take()
+        };
+        drop(old);
+
+        let mut stream = None;
+        let mut target = cue_target(0, main.buffer);
+        let (route, error) = match &setting {
+            CueSetting::Off => (CueRoute::Off, None),
+            CueSetting::Channels34 if main.channels >= 4 => (CueRoute::Channels34, None),
+            CueSetting::Channels34 => (
+                CueRoute::Off,
+                Some(
                     "Das Ausgabegerät hat keine Ausgänge 3/4. Wähle ein Gerät mit vier Ausgängen \
                      oder ein zweites Gerät für den Kopfhörer."
-                        .into(),
-                );
-                CueRoute::Off
-            }
+                        .to_string(),
+                ),
+            ),
+            CueSetting::Device { device_id, .. } if main.is(device_id.as_deref()) => (
+                CueRoute::Off,
+                Some(
+                    "Kopfhörer und Lautsprecher laufen über dasselbe Gerät. Wähle für den \
+                     Kopfhörer ein anderes Gerät."
+                        .to_string(),
+                ),
+            ),
             CueSetting::Device {
                 device_id,
                 buffer_frames,
-            } => match self.open_cue_stream(device_id.clone(), *buffer_frames, main_buffer) {
-                Ok((stream, target)) => {
-                    cue.stream = Some(stream);
-                    cue.target = target;
-                    CueRoute::Ring
+            } => match self.open_cue_stream(device_id.clone(), *buffer_frames, main.buffer) {
+                Ok((s, t)) => {
+                    stream = Some(s);
+                    target = t;
+                    (CueRoute::Ring, None)
                 }
-                Err(e) => {
-                    cue.error = Some(e);
-                    CueRoute::Off
-                }
+                Err(e) => (CueRoute::Off, Some(e)),
             },
         };
-        cue.active = route != CueRoute::Off;
-        let error = cue.error.clone();
-        drop(cue);
-        self.send(Command::Mixer(MixerCommand::CueRoute(route)));
+        {
+            let mut cue = lock(&self.shared.cue);
+            cue.setting = setting;
+            cue.stream = stream;
+            cue.target = target;
+            cue.error = error.clone();
+            cue.active = route != CueRoute::Off;
+            // Under the lock, so route and stream state cannot be reordered by another switch.
+            self.send(Command::Mixer(MixerCommand::CueRoute(route)));
+        }
         let status = self.status();
         (self.shared.notify)(UiEvent::AudioChanged(status.clone()));
         match error {
@@ -464,10 +499,11 @@ impl AudioService {
                 }
             }
         }
-        // Outputs 3/4 depend on the main device: check again after a switch.
-        let channels34 = lock(&self.shared.cue).setting == CueSetting::Channels34;
-        if channels34 {
-            let _ = self.set_cue(CueSetting::Channels34);
+        // The headphones depend on the main output (outputs 3/4, the ring's fill target, not
+        // being the same device): set them up again after every switch.
+        let cue = lock(&self.shared.cue).setting.clone();
+        if cue != CueSetting::Off {
+            let _ = self.set_cue(cue);
         }
         let status = self.status();
         (self.shared.notify)(UiEvent::AudioChanged(status.clone()));
@@ -629,25 +665,23 @@ impl AudioService {
         }
     }
 
-    /// Look at the *current* stream only: failures of streams already replaced cannot trigger a
-    /// recovery that would tear down a healthy one.
     /// The headphone device failed. The master is not touched: a vanished device stays off
     /// (falling back to the default device would usually mean the speakers), anything else is
     /// reopened once.
     fn check_cue_stream(&self) {
-        let failure = {
-            let cue = lock(&self.shared.cue);
-            cue.stream.as_ref().and_then(|s| s.stats.failure())
-        };
-        let Some(failure) = failure else { return };
-        let (setting, name) = {
+        // Failure check and removal under one lock: a switch in between must not lose its
+        // freshly opened stream to an old failure.
+        let (failure, setting, name) = {
             let mut cue = lock(&self.shared.cue);
+            let Some(failure) = cue.stream.as_ref().and_then(|s| s.stats.failure()) else {
+                return;
+            };
             let name = cue.stream.as_ref().map(|s| s.info.device_name.clone());
             cue.stream = None;
             cue.active = false;
-            (cue.setting.clone(), name)
+            self.send(Command::Mixer(MixerCommand::CueRoute(CueRoute::Off)));
+            (failure, cue.setting.clone(), name)
         };
-        self.send(Command::Mixer(MixerCommand::CueRoute(CueRoute::Off)));
         let name = name.unwrap_or_else(|| "Das Kopfhörer-Gerät".into());
         tracing::warn!(?failure, "headphone stream failed");
         match cue_recovery(failure) {
@@ -663,6 +697,10 @@ impl AudioService {
                     .name("rille-recover-cue".into())
                     .spawn(move || {
                         thread::sleep(RECOVERY_DELAY);
+                        // The user may have chosen something else meanwhile.
+                        if lock(&service.shared.cue).setting != setting {
+                            return;
+                        }
                         let message = match service.set_cue(setting) {
                             Ok(_) => {
                                 format!("Kopfhörer-Ausgabe von {name} unterbrochen, neu gestartet.")
@@ -679,6 +717,8 @@ impl AudioService {
         }
     }
 
+    /// Look at the *current* stream only: failures of streams already replaced cannot trigger a
+    /// recovery that would tear down a healthy one.
     fn check_stream(&self) {
         let failure = {
             let out = lock(&self.shared.output);
@@ -740,6 +780,24 @@ pub fn cue_target(cue_buffer: u32, main_buffer: u32) -> usize {
     (2 * cue_buffer.max(main_buffer) as usize).max(1_024)
 }
 
+/// What the headphone routing needs to know about the main output.
+struct MainFacts {
+    channels: u16,
+    buffer: u32,
+    device_id: Option<String>,
+    default_device: bool,
+}
+
+impl MainFacts {
+    /// Would a headphone device with this id be the main output itself?
+    fn is(&self, cue_device: Option<&str>) -> bool {
+        match cue_device {
+            None => self.default_device,
+            Some(id) => self.device_id.as_deref() == Some(id),
+        }
+    }
+}
+
 struct CueState {
     stream: Option<OutputStream>,
     setting: CueSetting,
@@ -787,16 +845,15 @@ fn should_send(last: Option<&rille_core::Snapshot>, now: &rille_core::Snapshot) 
     }
     let moving = now.decks.iter().any(|d| d.playing)
         || now.master_peak.iter().any(|p| *p > 0.0)
+        || now.cue_peak.iter().any(|p| *p > 0.0)
         || now.decks.iter().any(|d| d.peak.iter().any(|p| *p > 0.0));
-    moving
-        || prev.decks != now.decks
-        || prev.channel_fader != now.channel_fader
-        || prev.trim != now.trim
-        || prev.crossfader != now.crossfader
-        || prev.curve != now.curve
-        || prev.master_gain != now.master_gain
-        || prev.xruns != now.xruns
-        || prev.sample_rate != now.sample_rate
+    // Anything but the clock changed (EQ, filter, transition, headphones … all of it): news.
+    // Comparing field by field had missed some for months.
+    let same_apart_from_clock = rille_core::Snapshot {
+        frame_clock: now.frame_clock,
+        ..*prev
+    } == *now;
+    moving || !same_apart_from_clock
 }
 
 #[cfg(test)]
@@ -835,6 +892,24 @@ mod tests {
     fn a_vanished_headphone_device_stays_off_other_failures_reopen() {
         assert_eq!(cue_recovery(StreamFailure::DeviceGone), CueRecovery::Stop);
         assert_eq!(cue_recovery(StreamFailure::Other), CueRecovery::Reopen);
+    }
+
+    #[test]
+    fn headphones_cannot_use_the_main_output_device() {
+        let main = MainFacts {
+            channels: 2,
+            buffer: 256,
+            device_id: Some("coreaudio:usb".into()),
+            default_device: false,
+        };
+        assert!(main.is(Some("coreaudio:usb")));
+        assert!(!main.is(Some("coreaudio:phones")));
+        assert!(!main.is(None), "the default device is something else");
+        let default_main = MainFacts {
+            default_device: true,
+            ..main
+        };
+        assert!(default_main.is(None));
     }
 
     #[test]
@@ -882,6 +957,22 @@ mod tests {
             should_send(Some(&playing), &later),
             "playing decks stream continuously"
         );
+        // Any setting changed while nothing plays is news (EQ and filter were missed once).
+        for change in [
+            |s: &mut Snapshot| s.eq[1][2] = 0.9,
+            |s: &mut Snapshot| s.eq_kill[0][0] = true,
+            |s: &mut Snapshot| s.filter[1] = 0.2,
+            |s: &mut Snapshot| s.transition.kind = rille_core::TransitionKind::FilterOut,
+            |s: &mut Snapshot| s.cue[0] = true,
+            |s: &mut Snapshot| s.master_cue = true,
+            |s: &mut Snapshot| s.cue_mix = 0.1,
+            |s: &mut Snapshot| s.cue_level = 0.2,
+            |s: &mut Snapshot| s.cue_route = CueRoute::Ring,
+        ] {
+            let mut changed = idle;
+            change(&mut changed);
+            assert!(should_send(Some(&idle), &changed), "{changed:?}");
+        }
     }
 
     #[test]

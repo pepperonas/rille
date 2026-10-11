@@ -20,7 +20,8 @@ buchse des Mac neben einem externen Interface).
 ## Zweites Gerät
 - Eigener Stream mit eigenem Takt. Sein Callback liest den Ring über einen **Drift-Ausgleich**:
   Resampler (kubisch) mit Rate `1 + Korrektur`, die ein PI-Regler aus dem Füllstand berechnet
-  (Ziel: zwei Blöcke Vorlauf, Korrektur gedeckelt auf ±0,5 %). Leer → Stille und neu
+  (Ziel: zwei Blöcke Vorlauf, Korrektur gedeckelt auf ±0,5 %; P relativ zum Ziel, I mit der
+  doppelten P-Zeitkonstante). Beim Anlaufen wird ein Rückstau über dem Ziel verworfen. Leer → Stille und neu
   vorfüllen, bevor wieder gespielt wird (kein Stottern im Wechsel).
 - Der Ring-Leser liegt in einem eigenen Slot (wie `EngineSlot`), damit er Stream-Wechsel
   überlebt. Fällt das Cue-Gerät aus, läuft der Master unberührt weiter; der Cue-Stream wird

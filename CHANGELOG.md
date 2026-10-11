@@ -69,6 +69,15 @@ All notable changes to rille are documented here. The format follows
 - Track loading no longer decodes the whole file first (was ~360 ms for a 3:43 MP3).
 
 ### Fixed
+- Headphones (review of M8): switching the headphones or a setting while nothing plays now
+  reaches the app (the frame filter compared fields one by one and also missed EQ, kill,
+  filter and transition changes since M3 – it now compares the whole state); a device switch
+  starts at the target latency instead of with a backlog of up to 340 ms; clearing the ring
+  can no longer swap left and right; the headphone device opens without blocking the bridge;
+  concurrent switches cannot leave route and stream inconsistent; the headphones are set up
+  again after every change of the main output and refuse the main device itself; large clock
+  drifts (1000 ppm) are followed too (integral action, scaled with the buffer size); the
+  dropout count is read without touching the audio callback and starts at 0 per device.
 - Beat features (review of M7): a jump past an active loop (hot cue, cue, seek) leaves the
   loop instead of landing somewhere inside it; loops that would reach the track end are not
   made (the track used to stop with the loop still shown); a beat jump never pushes a loop off

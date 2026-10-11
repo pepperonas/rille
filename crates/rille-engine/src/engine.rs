@@ -536,7 +536,8 @@ impl Engine {
     }
 
     /// Render into an interleaved device buffer with `channels` channels. Channels 0/1 get the
-    /// master; any further channels are silenced (cue routing comes later).
+    /// master; channels 3/4 carry the headphones when routed there (`CueRoute::Channels34`),
+    /// all further channels stay silent.
     pub fn process(&mut self, out: &mut [f32], channels: usize) {
         if channels == 0 {
             return;
