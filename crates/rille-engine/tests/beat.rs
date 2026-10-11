@@ -376,6 +376,97 @@ fn sync_while_paused_matches_tempo_but_keeps_the_cue_position() {
     assert!((f64::from(TempoRange::Ten.rate(b.tempo)) * 124.0 - 120.0).abs() < 0.01);
 }
 
+/// Phase error of B against A in beats, right after a start.
+fn start_error(rig: &mut Rig) -> f64 {
+    wrap(rig.beat(DeckId::B) - rig.beat(DeckId::A))
+}
+
+#[test]
+fn a_deck_synced_while_paused_starts_on_the_phase() {
+    let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.1));
+    rig.seek(DeckId::A, 10.3);
+    rig.send(DeckId::A, DeckCommand::Play);
+    rig.seek(DeckId::B, 20.0);
+    rig.run(0.2);
+    rig.send(DeckId::B, DeckCommand::Sync);
+    // A plays on for a while: the phase has to be taken at Play, not at Sync.
+    rig.run(1.37);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.run(0.05);
+    let error = start_error(&mut rig);
+    assert!(error.abs() < 0.015, "started {error} beats off");
+    let b = rig.snap().decks[1].position as f64 / f64::from(SR);
+    assert!((b - 20.0).abs() < 0.3, "moved more than half a beat: {b} s");
+    // One-shot: the next start (after a pause) is not moved again.
+    rig.send(DeckId::B, DeckCommand::Pause);
+    rig.run(0.1);
+    rig.seek(DeckId::B, 30.0);
+    rig.run(0.01);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.run(0.01);
+    let b = rig.snap().decks[1].position;
+    assert!(
+        (30 * u64::from(SR)..30 * u64::from(SR) + 2 * BLOCK as u64).contains(&b),
+        "a later start moved the deck: {b}"
+    );
+}
+
+#[test]
+fn a_locked_deck_starts_on_the_phase_instead_of_drifting_into_it() {
+    let mut rig = Rig::new(grid(126.0, 0.05), grid(121.0, 0.21));
+    rig.seek(DeckId::A, 7.0);
+    rig.send(DeckId::A, DeckCommand::Play);
+    rig.seek(DeckId::B, 12.0);
+    rig.send(DeckId::B, DeckCommand::SyncLock(true));
+    rig.run(0.83);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.run(0.05);
+    let error = start_error(&mut rig);
+    assert!(error.abs() < 0.015, "started {error} beats off");
+}
+
+#[test]
+fn previewing_the_cue_keeps_a_paused_sync_for_play() {
+    let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.1));
+    rig.send(DeckId::A, DeckCommand::Play);
+    rig.seek(DeckId::B, 20.0);
+    rig.run(0.2);
+    rig.send(DeckId::B, DeckCommand::Sync);
+    rig.run(0.31);
+    // The first press sets the cue point there, the second previews it.
+    rig.send(DeckId::B, DeckCommand::CuePress);
+    rig.send(DeckId::B, DeckCommand::CueRelease);
+    rig.send(DeckId::B, DeckCommand::CuePress);
+    rig.run(0.3);
+    assert!(rig.snap().decks[1].playing, "not previewing");
+    rig.send(DeckId::B, DeckCommand::CueRelease);
+    rig.run(0.43);
+    assert!(!rig.snap().decks[1].playing);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.run(0.05);
+    let error = start_error(&mut rig);
+    assert!(
+        error.abs() < 0.015,
+        "started {error} beats off after a preview"
+    );
+}
+
+#[test]
+fn a_paused_sync_does_not_move_the_deck_when_the_other_deck_stands_still() {
+    let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.1));
+    rig.seek(DeckId::A, 10.3);
+    rig.seek(DeckId::B, 20.0);
+    rig.run(0.01);
+    rig.send(DeckId::B, DeckCommand::Sync);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.run(0.01);
+    let b = rig.snap().decks[1].position;
+    assert!(
+        (20 * u64::from(SR)..20 * u64::from(SR) + 2 * BLOCK as u64).contains(&b),
+        "moved to {b}"
+    );
+}
+
 #[test]
 fn unloading_a_deck_releases_its_sync_lock() {
     let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.0));

@@ -107,6 +107,11 @@ Das Frontend rechnet nichts Audio-Relevantes.
   einer, der sich ändert, während der Feed bereits im nächsten Durchlauf ist, fällt auf den
   alten Weg zurück (ausblenden, neu ansetzen). Pitch-Tests messen die Frequenz direkt hinter
   der Naht – die Varispeed-Brücke hätte dort die Tonhöhe des Tempos.
+- **Sync im Stillstand:** SYNC auf ein stehendes Deck setzt nur das Tempo und merkt sich
+  `sync_on_start`; die Phase wird erst beim Start genommen (`align_on_start`, vor dem Declick,
+  das Deck war still – kein Übergang nötig). Ein Lock-Folger startet genauso auf dem Beat statt
+  über `SYNC_CORRECTION_S` hineinzudriften. Der erste Cue-Druck auf einem gesuchten Deck setzt
+  nur den Cue-Punkt – Tests fürs Vorhören brauchen zwei Drücke.
 - Vom Nutzer korrigierte Grids (`grid_user`, Schema v4) überschreibt keine Analyse; erst eine
   geänderte Datei setzt das zurück.
 - **Kopfhörer auf zweitem Gerät:** Engine → `cue_tx`-Ring → `DriftReader` im Callback des

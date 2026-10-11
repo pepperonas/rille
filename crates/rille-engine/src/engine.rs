@@ -257,6 +257,8 @@ struct Deck {
     /// When sync lock was switched on (block count); with both decks locked, the later one
     /// follows the other.
     locked_at: u64,
+    /// SYNC was pressed while the deck stood still: the next Play also matches the phase.
+    sync_on_start: bool,
 }
 
 impl Deck {
@@ -279,6 +281,7 @@ impl Deck {
             loop_range: None,
             sync_lock: false,
             locked_at: 0,
+            sync_on_start: false,
         }
     }
 
@@ -748,6 +751,7 @@ impl Engine {
             deck.hot_cues = [None; HOT_CUES];
             deck.loop_range = None;
             deck.sync_lock = false;
+            deck.sync_on_start = false;
             deck.player.set_sync_nudge(0.0);
             let old = deck.track.take();
             self.release(old);
@@ -855,6 +859,10 @@ impl Engine {
             deck.loop_range = None;
         }
         let started = deck.transport.playing && !before.playing;
+        if started {
+            self.align_on_start(id, cmd);
+        }
+        let deck = &mut self.decks[id.index()];
         deck.declick(before);
         // Starting the deck again (play, cue preview) means the DJ wants to hear it: a running
         // transition on it lets go instead of muting and later pausing the new playback.
@@ -903,8 +911,25 @@ impl Engine {
         }
     }
 
-    /// SYNC pressed: match the other deck's tempo; if it plays, also its phase (one short
-    /// crossfaded jump).
+    /// Where `id` has to stand to be on the phase of the other deck (the nearest such place,
+    /// at most half a beat away). `None` unless the other deck plays and both have grids.
+    fn phase_target(&self, id: DeckId) -> Option<f64> {
+        let (source, grid) = self.sync_source(id)?;
+        if !self.decks[source.index()].transport.playing {
+            return None;
+        }
+        let follow = self.follow(id, source, grid)?;
+        let error = self.phase_error(id, source, follow)?;
+        let deck = &self.decks[id.index()];
+        let own = deck.grid()?;
+        let to = deck.player.playhead() - error * beat::beat_frames(&own, self.sample_rate);
+        let last = deck.transport.frames.saturating_sub(1) as f64;
+        Some(to.clamp(0.0, last))
+    }
+
+    /// SYNC pressed: match the other deck's tempo; if both play, also its phase (one short
+    /// crossfaded jump). A deck that stands still keeps its position and catches the phase
+    /// when it starts (`align_on_start`) – the other deck moves on until then anyway.
     fn sync_once(&mut self, id: DeckId) {
         let Some((source, grid)) = self.sync_source(id) else {
             return;
@@ -913,21 +938,42 @@ impl Engine {
             return;
         };
         self.set_rate(id, follow.rate);
-        // Phase only between two playing decks: a paused deck stays on its cue (the target
-        // moves on anyway until Play); sync lock pulls the phase in once both play.
-        if !self.decks[source.index()].transport.playing
-            || !self.decks[id.index()].transport.playing
-        {
+        if !self.decks[id.index()].transport.playing {
+            self.decks[id.index()].sync_on_start = true;
             return;
         }
-        let Some(error) = self.phase_error(id, source, follow) else {
+        if let Some(to) = self.phase_target(id) {
+            self.decks[id.index()].jump(to);
+        }
+    }
+
+    /// The deck just started (it was silent before, so moving it costs nothing audible): a
+    /// deck that follows by sync lock, or that was synced while standing still, starts on the
+    /// phase of the playing deck instead of drifting into it. Moves at most half a beat and
+    /// never out of a running loop.
+    fn align_on_start(&mut self, id: DeckId, cmd: DeckCommand) {
+        let deck = &self.decks[id.index()];
+        let other = &self.decks[id.other().index()];
+        let leads = other.sync_lock && other.locked_at > deck.locked_at;
+        let wanted = (deck.sync_lock && !leads) || deck.sync_on_start;
+        // Previewing on the cue does not use up a one-shot sync: Play still has to land.
+        if cmd != DeckCommand::CuePress {
+            self.decks[id.index()].sync_on_start = false;
+        }
+        if !wanted {
+            return;
+        }
+        let Some(to) = self.phase_target(id) else {
             return;
         };
         let deck = &mut self.decks[id.index()];
-        let Some(own) = deck.grid() else { return };
-        let to = deck.player.playhead() - error * beat::beat_frames(&own, self.sample_rate);
-        let last = deck.transport.frames.saturating_sub(1) as f64;
-        deck.jump(to.clamp(0.0, last));
+        if let Some((start, end)) = deck.loop_range
+            && !(start as f64..end as f64).contains(&to)
+        {
+            return;
+        }
+        deck.transport.position = to as u64;
+        deck.player.jump_to(to);
     }
 
     fn set_sync_lock(&mut self, id: DeckId, on: bool) {

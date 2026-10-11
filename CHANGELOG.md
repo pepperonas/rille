@@ -11,6 +11,9 @@ All notable changes to rille are documented here. The format follows
   seam crossfaded over 4 ms) instead of restarting at every pass, so a pass no longer opens
   with a short stretch at the tempo's pitch. Leaving or resizing a loop early in a pass keeps
   the stretcher running, too.
+- Sync while paused: a deck synced (or locked) while it stands still keeps its position and
+  catches the phase of the playing deck the moment it starts – at most half a beat away,
+  never out of a running loop. Previewing on the cue does not use up the one-shot sync.
 
 ### Added
 - M9 polish: global keyboard shortcuts for both decks and the mixer (physical keys, so QWERTZ

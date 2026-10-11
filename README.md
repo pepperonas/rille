@@ -174,7 +174,9 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
   (steady with reduced motion).
 - **Sync and sync lock** — SYNC matches tempo and phase to the other deck once (at half or
   double tempo when that is closer: 174 follows 87, widening the tempo range if needed); LOCK
-  keeps following it and pulls the phase in with at most 2 % speed change, never with a jump.
+  keeps following it and pulls the phase in with at most 2 % speed change, never with a jump. A
+  deck synced or locked while it stands still keeps its cue and starts on the beat when you
+  press Play (moved by at most half a beat).
 - **Hot cues, loops, beat jump** — eight hot cues per deck (snapped to a beat within ⅛ beat,
   saved in the library), beat loops from ¼ to 32 beats that repeat exactly at any tempo (the
   audio block is split at the loop end), beat jumps of ½, 1, 4 and 16 beats that take a

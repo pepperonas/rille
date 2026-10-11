@@ -126,7 +126,9 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
 - **Sync und Sync-Lock** — SYNC gleicht Tempo und Phase einmal an das andere Deck an (bei
   halbem oder doppeltem Tempo, wenn das näher liegt: 174 folgt 87; der Tempo-Bereich wird bei
   Bedarf erweitert); LOCK folgt dauerhaft und zieht die Phase mit höchstens 2 %
-  Geschwindigkeitsänderung heran, nie mit einem Sprung.
+  Geschwindigkeitsänderung heran, nie mit einem Sprung. Ein Deck, das im Stillstand gesynct
+  oder gelockt wird, bleibt auf seinem Cue und startet bei Play auf dem Beat (höchstens einen
+  halben Beat versetzt).
 - **Hot Cues, Loops, Beat Jump** — acht Hot Cues je Deck (auf einen Beat gerastet, wenn er
   näher als ⅛ Beat liegt, in der Library gespeichert), Beat Loops von ¼ bis 32 Beats, die bei
   jedem Tempo exakt wiederholen (der Audioblock wird am Loop-Ende geteilt), Beat Jumps um ½, 1,

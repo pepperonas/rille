@@ -55,3 +55,6 @@ Last während der Analyse, Speicher je Track-Minute.
 ## Bekannte Grenzen (bleiben)
 - ~~Nahtlose Keylock-Loops~~ – nachgezogen nach M9: der Stretcher wird mit dem Loop als
   durchgehendem Strom gefüttert, statt an jeder Naht neu anzulaufen.
+- ~~Sync im Stillstand nur Tempo~~ – nachgezogen nach M9: ein im Stillstand gesynctes oder
+  gelocktes Deck übernimmt die Phase beim Start (`align_on_start`, höchstens ½ Beat, nie aus
+  einem Loop heraus); Vorhören am Cue verbraucht den einmaligen Sync nicht.
