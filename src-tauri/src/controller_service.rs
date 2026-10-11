@@ -21,6 +21,8 @@ const TICK: Duration = Duration::from_millis(16);
 const HOTPLUG_INTERVAL: Duration = Duration::from_secs(1);
 /// Blink rate of LEDs that blink (paused deck, unset cue): 2 Hz.
 const BLINK_PERIOD: Duration = Duration::from_millis(500);
+/// A fader that sent nothing for this long is at rest: tempo changes now come from the engine.
+const FADER_REST: Duration = Duration::from_millis(300);
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -96,6 +98,7 @@ enum Request {
     /// The app changed an absolute control; the hardware has to pick it up again.
     SoftwareChanged(TakeoverKey, f32),
     SetVinyl(bool),
+    PadMode(DeckId, PadMode),
     Monitor(bool),
     Status(Sender<ControllerStatus>),
 }
@@ -122,6 +125,10 @@ impl ControllerService {
     /// Report a change made in the app (not by the controller) to an absolute control.
     pub fn software_changed(&self, key: TakeoverKey, value: f32) {
         let _ = self.requests.send(Request::SoftwareChanged(key, value));
+    }
+
+    pub fn set_pad_mode(&self, deck: DeckId, mode: PadMode) {
+        let _ = self.requests.send(Request::PadMode(deck, mode));
     }
 
     pub fn set_vinyl_mode(&self, on: bool) {
@@ -188,13 +195,88 @@ pub fn software_values(s: &Snapshot) -> Vec<(rille_midi::TakeoverKey, f32)> {
     v
 }
 
-pub fn lamp_state(snapshot: &Snapshot) -> LampState {
+/// What the eight pads of a deck do. Chosen in the app (the DDJ-200 has no mode buttons).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PadMode {
+    #[default]
+    HotCue,
+    BeatLoop,
+    BeatJump,
+}
+
+/// Beat loop length per pad (pads 1–8).
+pub const LOOP_BEATS: [f32; 8] = [0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0, 32.0];
+/// Beat jump per pad: top row back, bottom row forward, growing to the right.
+pub const JUMP_BEATS: [f32; 8] = [-0.5, -1.0, -4.0, -16.0, 0.5, 1.0, 4.0, 16.0];
+
+/// Engine commands for a pad press in `mode`. Shift: delete the hot cue, or leave the loop.
+pub fn pad_commands(mode: PadMode, deck: DeckId, index: u8, shifted: bool) -> Vec<Command> {
+    let i = usize::from(index);
+    let cmd = match (mode, shifted) {
+        (PadMode::HotCue, false) => DeckCommand::HotCue(index),
+        (PadMode::HotCue, true) => DeckCommand::HotCueClear(index),
+        (PadMode::BeatLoop, false) => match LOOP_BEATS.get(i) {
+            Some(&beats) => DeckCommand::BeatLoop(beats),
+            None => return Vec::new(),
+        },
+        (PadMode::BeatLoop, true) => DeckCommand::LoopExit,
+        (PadMode::BeatJump, _) => match JUMP_BEATS.get(i) {
+            Some(&beats) => DeckCommand::BeatJump(beats),
+            None => return Vec::new(),
+        },
+    };
+    vec![Command::Deck(deck, cmd)]
+}
+
+/// Pad lamps: empty pad off, set pad on, the active one blinks with the beat (on during the
+/// first half of every beat; steady while paused).
+pub fn pad_lamps(snapshot: &Snapshot, deck: DeckId, mode: PadMode) -> [Lamp; 8] {
+    let d = &snapshot.decks[deck.index()];
+    let mut pads = [Lamp::Off; 8];
+    if d.track_id.is_none() {
+        return pads;
+    }
+    let grid = d.grid.filter(|g| g.bpm > 0.0 && g.bpm.is_finite());
+    let beat_on = match grid {
+        Some(g) if d.playing => {
+            let beat = rille_engine::beat::beat_at(&g, d.position as f64, snapshot.sample_rate);
+            beat.rem_euclid(1.0) < 0.5
+        }
+        _ => true,
+    };
+    match mode {
+        PadMode::HotCue => {
+            for (pad, cue) in pads.iter_mut().zip(d.hot_cues) {
+                *pad = Lamp::from_bool(cue.is_some());
+            }
+        }
+        PadMode::BeatLoop => {
+            if let (Some((start, end)), Some(g)) = (d.loop_range, grid) {
+                let beats = (end - start) as f64
+                    / rille_engine::beat::beat_frames(&g, snapshot.sample_rate);
+                if let Some(i) = LOOP_BEATS
+                    .iter()
+                    .position(|&b| (f64::from(b) - beats).abs() < 0.01)
+                {
+                    pads[i] = Lamp::from_bool(beat_on);
+                }
+            }
+        }
+        PadMode::BeatJump => pads = [Lamp::from_bool(grid.is_some()); 8],
+    }
+    pads
+}
+
+pub fn lamp_state(snapshot: &Snapshot, modes: [PadMode; 2]) -> LampState {
     let t = snapshot.transition;
+    let deck = |id: DeckId| DeckLamps {
+        pads: pad_lamps(snapshot, id, modes[id.index()]),
+        sync: Lamp::from_bool(snapshot.decks[id.index()].sync_lock),
+        ..deck_lamps(snapshot, id)
+    };
     LampState {
-        decks: [
-            deck_lamps(snapshot, DeckId::A),
-            deck_lamps(snapshot, DeckId::B),
-        ],
+        decks: [deck(DeckId::A), deck(DeckId::B)],
         // Lit while the effect runs, blinking while a cancelled effect's tail decays.
         transition_fx: match (t.deck, t.releasing) {
             (None, _) => Lamp::Off,
@@ -221,6 +303,8 @@ pub fn commands_for(action: ControllerAction) -> Vec<Command> {
             pressed: false,
         } => vec![deck(d, DeckCommand::CueRelease)],
         A::JumpToStart(d) => vec![deck(d, DeckCommand::JumpToStart)],
+        A::SyncOnce(d) => vec![deck(d, DeckCommand::Sync)],
+        A::SyncLockToggle(d) => vec![deck(d, DeckCommand::ToggleSyncLock)],
         A::Reverse { deck: d, on } => vec![deck(d, DeckCommand::Reverse(on))],
         A::CycleTempoRange(d) => vec![deck(d, DeckCommand::CycleTempoRange)],
         A::Tempo { deck: d, value } => vec![deck(d, DeckCommand::Tempo(value))],
@@ -276,6 +360,11 @@ struct Worker {
     monitor_on: bool,
     started: Instant,
     scroll: ScrollAccumulator,
+    pad_mode: [PadMode; 2],
+    /// Tempo per deck as the engine last reported it, to notice changes made by sync.
+    engine_tempo: [f32; 2],
+    /// Last time the tempo fader of each deck sent a value.
+    tempo_touched: [Option<Instant>; 2],
 }
 
 impl Worker {
@@ -293,6 +382,31 @@ impl Worker {
             monitor_on: false,
             started: Instant::now(),
             scroll: ScrollAccumulator::default(),
+            pad_mode: [PadMode::default(); 2],
+            engine_tempo: [0.0; 2],
+            tempo_touched: [None; 2],
+        }
+    }
+
+    /// Sync moves the tempo without the fader: the hardware fader must pick the new value up
+    /// before it takes over again (soft takeover), or touching it would jump the tempo back.
+    /// A change counts as the engine's own only while the fader rests: the snapshot lags
+    /// behind a moving fader, and treating that lag as a foreign change would cut a sweep.
+    fn follow_engine_tempo(&mut self, snapshot: &Snapshot) {
+        for deck in DeckId::ALL {
+            let i = deck.index();
+            let tempo = snapshot.decks[i].tempo;
+            if (tempo - self.engine_tempo[i]).abs() <= 1e-4 {
+                continue;
+            }
+            self.engine_tempo[i] = tempo;
+            let resting = self.tempo_touched[i].is_none_or(|t| t.elapsed() > FADER_REST);
+            if resting {
+                self.session.software_changed(
+                    (Scope::Deck(deck), Control::TempoFader),
+                    crate::dto::tempo_to_fader(tempo),
+                );
+            }
         }
     }
 
@@ -321,6 +435,7 @@ impl Worker {
                         self.send_all(&out);
                         (self.notify)(ControllerEvent::Status(self.status()));
                     }
+                    Request::PadMode(deck, mode) => self.pad_mode[deck.index()] = mode,
                     Request::SoftwareChanged(key, value) => {
                         self.session.software_changed(key, value);
                     }
@@ -395,6 +510,12 @@ impl Worker {
     fn on_input(&mut self, time_us: u64, bytes: &[u8]) {
         let _ = time_us;
         let (event, action) = self.session.on_input(bytes);
+        if let Some(e) = &event
+            && e.control == Control::TempoFader
+            && let Scope::Deck(deck) = e.scope
+        {
+            self.tempo_touched[deck.index()] = Some(Instant::now());
+        }
         if self.monitor_on {
             let meaning = event.as_ref().map(describe);
             self.monitor
@@ -417,6 +538,17 @@ impl Worker {
                 }
                 ControllerAction::LoadSelected(deck) => {
                     (self.notify)(ControllerEvent::LibraryLoad(deck.into()));
+                    continue;
+                }
+                ControllerAction::Pad {
+                    deck,
+                    index,
+                    pressed: true,
+                    shifted,
+                } => {
+                    for command in pad_commands(self.pad_mode[deck.index()], deck, index, shifted) {
+                        self.engine.send(command);
+                    }
                     continue;
                 }
                 _ => {}
@@ -451,8 +583,9 @@ impl Worker {
             let blink_on =
                 (self.started.elapsed().as_millis() / BLINK_PERIOD.as_millis()).is_multiple_of(2);
             let mut out = Vec::new();
+            self.follow_engine_tempo(&snapshot);
             self.session
-                .update_leds(&lamp_state(&snapshot), blink_on, &mut out);
+                .update_leds(&lamp_state(&snapshot, self.pad_mode), blink_on, &mut out);
             self.send_all(&out);
         }
         if self.monitor_on {
@@ -572,11 +705,17 @@ mod tests {
     #[test]
     fn transition_lamp_follows_the_effect() {
         let mut s = Snapshot::default();
-        assert_eq!(lamp_state(&s).transition_fx, Lamp::Off);
+        assert_eq!(
+            lamp_state(&s, [PadMode::HotCue; 2]).transition_fx,
+            Lamp::Off
+        );
         s.transition.deck = Some(DeckId::A);
-        assert_eq!(lamp_state(&s).transition_fx, Lamp::On);
+        assert_eq!(lamp_state(&s, [PadMode::HotCue; 2]).transition_fx, Lamp::On);
         s.transition.releasing = true;
-        assert_eq!(lamp_state(&s).transition_fx, Lamp::Blink);
+        assert_eq!(
+            lamp_state(&s, [PadMode::HotCue; 2]).transition_fx,
+            Lamp::Blink
+        );
     }
 
     #[test]
@@ -675,5 +814,102 @@ mod tests {
         assert_eq!(rows, [0, 0, 0, 1, 0, 1, 0, -1, 0]);
         let mut fast = ScrollAccumulator::default();
         assert_eq!(fast.push(TICKS_PER_ROW * 5 + 1), 5);
+    }
+
+    fn looping(beats: f64) -> Snapshot {
+        let mut s = Snapshot {
+            sample_rate: 48_000,
+            ..Snapshot::default()
+        };
+        let d = &mut s.decks[0];
+        d.track_id = Some(1);
+        d.grid = Some(rille_core::BeatGrid {
+            bpm: 120.0,
+            first_beat: 0.0,
+        });
+        d.loop_range = Some((48_000, 48_000 + (beats * 24_000.0) as u64));
+        s
+    }
+
+    #[test]
+    fn pads_follow_the_pad_mode() {
+        let d = |c| Command::Deck(DeckId::B, c);
+        assert_eq!(
+            pad_commands(PadMode::HotCue, DeckId::B, 2, false),
+            [d(DeckCommand::HotCue(2))]
+        );
+        assert_eq!(
+            pad_commands(PadMode::HotCue, DeckId::B, 2, true),
+            [d(DeckCommand::HotCueClear(2))]
+        );
+        assert_eq!(
+            pad_commands(PadMode::BeatLoop, DeckId::B, 0, false),
+            [d(DeckCommand::BeatLoop(0.25))]
+        );
+        assert_eq!(
+            pad_commands(PadMode::BeatLoop, DeckId::B, 7, false),
+            [d(DeckCommand::BeatLoop(32.0))]
+        );
+        assert_eq!(
+            pad_commands(PadMode::BeatLoop, DeckId::B, 5, true),
+            [d(DeckCommand::LoopExit)]
+        );
+        assert_eq!(
+            pad_commands(PadMode::BeatJump, DeckId::B, 0, false),
+            [d(DeckCommand::BeatJump(-0.5))]
+        );
+        assert_eq!(
+            pad_commands(PadMode::BeatJump, DeckId::B, 7, false),
+            [d(DeckCommand::BeatJump(16.0))]
+        );
+        assert!(pad_commands(PadMode::BeatLoop, DeckId::B, 8, false).is_empty());
+    }
+
+    #[test]
+    fn pad_lamps_show_set_cues_and_blink_the_active_loop_with_the_beat() {
+        let mut s = looping(4.0);
+        s.decks[0].hot_cues[1] = Some(10);
+        let cues = pad_lamps(&s, DeckId::A, PadMode::HotCue);
+        assert_eq!(cues[1], Lamp::On);
+        assert_eq!(cues[0], Lamp::Off);
+
+        // Paused: the active loop pad is steadily on.
+        let loops = pad_lamps(&s, DeckId::A, PadMode::BeatLoop);
+        assert_eq!(loops[4], Lamp::On, "4 beats is pad 5");
+        assert_eq!(loops.iter().filter(|l| **l == Lamp::On).count(), 1);
+        // Playing: on in the first half of a beat, off in the second.
+        s.decks[0].playing = true;
+        s.decks[0].position = 48_000 + 3_000;
+        assert_eq!(pad_lamps(&s, DeckId::A, PadMode::BeatLoop)[4], Lamp::On);
+        s.decks[0].position = 48_000 + 15_000;
+        assert_eq!(pad_lamps(&s, DeckId::A, PadMode::BeatLoop)[4], Lamp::Off);
+
+        assert_eq!(pad_lamps(&s, DeckId::A, PadMode::BeatJump), [Lamp::On; 8]);
+        s.decks[0].grid = None;
+        assert_eq!(pad_lamps(&s, DeckId::A, PadMode::BeatJump), [Lamp::Off; 8]);
+        assert_eq!(
+            pad_lamps(&s, DeckId::B, PadMode::HotCue),
+            [Lamp::Off; 8],
+            "empty deck"
+        );
+    }
+
+    #[test]
+    fn sync_buttons_and_lamp() {
+        assert_eq!(
+            commands_for(ControllerAction::SyncOnce(DeckId::A)),
+            [Command::Deck(DeckId::A, DeckCommand::Sync)]
+        );
+        assert_eq!(
+            commands_for(ControllerAction::SyncLockToggle(DeckId::B)),
+            [Command::Deck(DeckId::B, DeckCommand::ToggleSyncLock)]
+        );
+        let mut s = looping(1.0);
+        assert_eq!(
+            lamp_state(&s, [PadMode::HotCue; 2]).decks[0].sync,
+            Lamp::Off
+        );
+        s.decks[0].sync_lock = true;
+        assert_eq!(lamp_state(&s, [PadMode::HotCue; 2]).decks[0].sync, Lamp::On);
     }
 }

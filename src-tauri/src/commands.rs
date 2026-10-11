@@ -3,13 +3,13 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use rille_core::Command;
+use rille_core::{BeatGrid, Command};
 use rille_engine::output::{self, OutputRequest};
 use tauri::ipc::{Channel, Response};
 use tauri::{Manager, State};
 
 use crate::audio_service::{AudioService, TrackMeta};
-use crate::controller_service::{ControllerService, ControllerStatus};
+use crate::controller_service::{ControllerService, ControllerStatus, PadMode};
 use crate::dto::{AudioDevice, AudioStatus, Deck, DeckAction, MixerAction, StateFrame};
 use crate::library_service::{
     LibraryProgress, LibraryService, LibraryTrack, LibraryUnavailable, LoadInfo,
@@ -77,6 +77,8 @@ fn meta_of(info: LoadInfo) -> TrackMeta {
         artist: info.artist,
         bpm: info.bpm,
         library_id: Some(info.id),
+        grid: info.grid,
+        hot_cues: info.hot_cues,
     }
 }
 
@@ -101,7 +103,7 @@ pub fn deck_load_track(
         .row(id)
         .ok_or_else(|| "Dieser Track ist nicht mehr in der Library".to_string())?;
     library.prioritize(&row);
-    let info = LoadInfo::from(&row);
+    let info = library.load_info(&row);
     let path = info.path.clone();
     audio.load_file(deck.into(), path, meta_of(info))
 }
@@ -110,6 +112,24 @@ pub fn deck_load_track(
 #[tauri::command]
 pub fn library_peaks(id: i64, app: tauri::AppHandle) -> Result<Response, String> {
     library(&app)?.peaks(id).map(Response::new)
+}
+
+/// The user corrected a beatgrid. `bpm` 0 or less removes the grid.
+#[tauri::command]
+pub fn library_set_grid(
+    id: i64,
+    bpm: f64,
+    first_beat: f64,
+    audio: State<'_, AudioService>,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
+    let grid = (bpm.is_finite() && bpm > 0.0 && first_beat.is_finite()).then_some(BeatGrid {
+        bpm: bpm.clamp(20.0, 400.0),
+        first_beat,
+    });
+    library(&app)?.set_grid(id, grid)?;
+    audio.update_grid(id, grid);
+    Ok(())
 }
 
 #[tauri::command]
@@ -179,6 +199,14 @@ pub fn mixer_command(action: MixerAction, audio: State<'_, AudioService>, app: t
 #[tauri::command]
 pub fn controller_status(controller: State<'_, ControllerService>) -> ControllerStatus {
     controller.status()
+}
+
+/// Pad mode of a deck (the DDJ-200 has no mode buttons; the app chooses).
+#[tauri::command]
+pub fn controller_pad_mode(deck: Deck, mode: PadMode, app: tauri::AppHandle) {
+    if let Some(controller) = app.try_state::<ControllerService>() {
+        controller.set_pad_mode(deck.into(), mode);
+    }
 }
 
 #[tauri::command]

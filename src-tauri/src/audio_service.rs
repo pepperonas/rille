@@ -12,9 +12,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rille_core::{Command, DeckCommand, DeckId, TrackAudio};
+use rille_core::{BeatGrid, Command, DeckCommand, DeckId, HOT_CUES, TrackAudio};
 use rille_engine::output::{self, OutputError, OutputRequest, OutputStream, StreamFailure};
-use rille_engine::{EngineEvent, EngineHandle, EngineSlot, engine_pair};
+use rille_engine::{EngineEvent, EngineHandle, EngineSlot, TrackLoad, engine_pair};
 use rille_library::decode::{DecodeStream, open_stream};
 
 use crate::dto::{AudioStatus, Deck, DeckLoadFailed, DeckLoaded, StateFrame};
@@ -31,12 +31,18 @@ const RECOVERY_DELAY: Duration = Duration::from_millis(250);
 /// Notifications for the frontend. Mapped to Tauri events in `lib.rs`.
 #[derive(Debug, Clone)]
 pub enum UiEvent {
-    State(StateFrame),
+    /// Boxed: a frame is large, the other events are small.
+    State(Box<StateFrame>),
     DeckLoaded(DeckLoaded),
     DeckLoadFailed(DeckLoadFailed),
     /// The track plays, but not all of it could be decoded.
     DeckLoadWarning(DeckLoadFailed),
     DeckEnded(Deck),
+    /// Hot cues of a library track changed on a deck (set or deleted): save them.
+    HotCuesChanged {
+        library_id: i64,
+        cues: [Option<f64>; HOT_CUES],
+    },
     AudioChanged(AudioStatus),
 }
 
@@ -57,6 +63,9 @@ pub struct TrackMeta {
     pub bpm: Option<f64>,
     /// Library row, for the waveform and the beatgrid.
     pub library_id: Option<i64>,
+    pub grid: Option<BeatGrid>,
+    /// Saved hot cues, in seconds.
+    pub hot_cues: [Option<f64>; HOT_CUES],
 }
 
 impl TrackMeta {
@@ -66,6 +75,8 @@ impl TrackMeta {
             artist: None,
             bpm: None,
             library_id: None,
+            grid: None,
+            hot_cues: [None; HOT_CUES],
         }
     }
 }
@@ -88,6 +99,15 @@ struct Shared {
     latest_request: [AtomicU64; 2],
     recovering: AtomicBool,
     notify: Notify,
+    /// What is on each deck, for grid updates and saving hot cues.
+    deck_tracks: [Mutex<Option<DeckTrack>>; 2],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct DeckTrack {
+    /// The load request id (= engine track id).
+    track_id: u64,
+    library_id: Option<i64>,
 }
 
 #[derive(Clone)]
@@ -192,6 +212,7 @@ impl AudioService {
                 latest_request: [AtomicU64::new(0), AtomicU64::new(0)],
                 recovering: AtomicBool::new(false),
                 notify,
+                deck_tracks: [Mutex::new(None), Mutex::new(None)],
             }),
         };
         service.spawn_loader(DeckId::A, rx_a);
@@ -237,9 +258,22 @@ impl AudioService {
         Ok(id)
     }
 
+    /// A library track's grid changed (analysis finished, user correction): decks playing it
+    /// get it at once.
+    pub fn update_grid(&self, library_id: i64, grid: Option<BeatGrid>) {
+        for deck in DeckId::ALL {
+            let on_deck = lock(&self.shared.deck_tracks[deck.index()])
+                .is_some_and(|t| t.library_id == Some(library_id));
+            if on_deck {
+                self.send(Command::Deck(deck, DeckCommand::SetGrid(grid)));
+            }
+        }
+    }
+
     /// Empty the deck and cancel a load that is still decoding.
     pub fn unload(&self, deck: DeckId) {
         self.shared.latest_request[deck.index()].store(0, Ordering::Release);
+        *lock(&self.shared.deck_tracks[deck.index()]) = None;
         self.send(Command::Deck(deck, DeckCommand::Unload));
     }
 
@@ -338,11 +372,19 @@ impl AudioService {
                 }
                 let track = stream.track();
                 let duration_secs = track.duration_secs();
-                let mut pending = Some(track.clone());
+                let rate = f64::from(shared.sample_rate);
+                let mut pending = Some(TrackLoad {
+                    grid: request.meta.grid,
+                    hot_cues: request
+                        .meta
+                        .hot_cues
+                        .map(|c| c.filter(|s| s.is_finite() && *s >= 0.0).map(|s| (s * rate) as u64)),
+                    ..TrackLoad::new(request.deck, track.clone())
+                });
                 for _ in 0..100 {
                     let Some(t) = pending.take() else { break };
                     // Lock only for the push itself; never sleep while holding it.
-                    let pushed = lock(&shared.handle).load(request.deck, t);
+                    let pushed = lock(&shared.handle).load_track(t);
                     if let Err(back) = pushed {
                         pending = Some(back);
                         thread::sleep(Duration::from_millis(5));
@@ -352,6 +394,10 @@ impl AudioService {
                     fail("Die Audio-Engine nimmt gerade keine Tracks an (keine Ausgabe aktiv?)".into());
                     continue;
                 }
+                *lock(&shared.deck_tracks[request.deck.index()]) = Some(DeckTrack {
+                    track_id: request.id,
+                    library_id: request.meta.library_id,
+                });
                 (shared.notify)(UiEvent::DeckLoaded(DeckLoaded {
                     deck,
                     track_id: request.id,
@@ -387,10 +433,11 @@ impl AudioService {
             .name("rille-bridge".into())
             .spawn(move || {
                 let mut last_sent: Option<rille_core::Snapshot> = None;
+                let mut cues = [SeenCues::default(); 2];
                 let mut next = Instant::now();
                 loop {
                     next += FRAME_INTERVAL;
-                    service.bridge_tick(&mut last_sent);
+                    service.bridge_tick(&mut last_sent, &mut cues);
                     service.check_stream();
                     let now = Instant::now();
                     if now > next + FRAME_INTERVAL * 4 {
@@ -404,7 +451,7 @@ impl AudioService {
         }
     }
 
-    fn bridge_tick(&self, last_sent: &mut Option<rille_core::Snapshot>) {
+    fn bridge_tick(&self, last_sent: &mut Option<rille_core::Snapshot>, cues: &mut [SeenCues; 2]) {
         let (snapshot, dropped, events) = {
             let mut handle = lock(&self.shared.handle);
             let snapshot = handle.snapshot();
@@ -423,10 +470,21 @@ impl AudioService {
                 (self.shared.notify)(UiEvent::DeckEnded(deck.into()));
             }
         }
+        for deck in DeckId::ALL {
+            let on_deck = *lock(&self.shared.deck_tracks[deck.index()]);
+            let d = &snapshot.decks[deck.index()];
+            if let Some((library_id, frames)) = cue_change(&mut cues[deck.index()], d, on_deck) {
+                let rate = f64::from(snapshot.sample_rate.max(1));
+                (self.shared.notify)(UiEvent::HotCuesChanged {
+                    library_id,
+                    cues: frames.map(|c| c.map(|f| f as f64 / rate)),
+                });
+            }
+        }
         if should_send(last_sent.as_ref(), &snapshot) {
-            (self.shared.notify)(UiEvent::State(StateFrame::from_snapshot(
+            (self.shared.notify)(UiEvent::State(Box::new(StateFrame::from_snapshot(
                 &snapshot, dropped,
-            )));
+            ))));
             *last_sent = Some(snapshot);
         }
     }
@@ -473,6 +531,37 @@ impl AudioService {
         });
         (self.shared.notify)(UiEvent::AudioChanged(self.status()));
     }
+}
+
+/// Hot cues last seen on a deck, per engine track.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct SeenCues {
+    track_id: Option<u64>,
+    cues: [Option<u64>; HOT_CUES],
+}
+
+/// Hot cues the DJ changed on the track that is on the deck, to be saved for its library row.
+/// The first sight of a track only records its cues (they came from the library); snapshots
+/// that still show the previous track are ignored.
+fn cue_change(
+    seen: &mut SeenCues,
+    deck: &rille_core::DeckSnapshot,
+    on_deck: Option<DeckTrack>,
+) -> Option<(i64, [Option<u64>; HOT_CUES])> {
+    let on_deck = on_deck?;
+    if deck.track_id != Some(on_deck.track_id) {
+        return None;
+    }
+    let first_sight = seen.track_id != deck.track_id;
+    let changed = seen.cues != deck.hot_cues;
+    *seen = SeenCues {
+        track_id: deck.track_id,
+        cues: deck.hot_cues,
+    };
+    if first_sight || !changed {
+        return None;
+    }
+    on_deck.library_id.map(|id| (id, deck.hot_cues))
 }
 
 /// Send a frame when anything visible changed or while audio moves.
@@ -565,5 +654,46 @@ mod tests {
             should_send(Some(&playing), &later),
             "playing decks stream continuously"
         );
+    }
+
+    #[test]
+    fn hot_cues_are_saved_only_when_the_dj_changes_them() {
+        let mut seen = SeenCues::default();
+        let on_deck = Some(DeckTrack {
+            track_id: 7,
+            library_id: Some(42),
+        });
+        let mut deck = Snapshot::default().decks[0];
+        deck.track_id = Some(6); // the previous track is still showing
+        deck.hot_cues[0] = Some(5);
+        assert_eq!(cue_change(&mut seen, &deck, on_deck), None);
+        deck.track_id = Some(7);
+        deck.hot_cues = [None; HOT_CUES];
+        deck.hot_cues[1] = Some(100);
+        assert_eq!(
+            cue_change(&mut seen, &deck, on_deck),
+            None,
+            "loaded cues are not news"
+        );
+        assert_eq!(
+            cue_change(&mut seen, &deck, on_deck),
+            None,
+            "nothing changed"
+        );
+        deck.hot_cues[2] = Some(200);
+        let (id, cues) = cue_change(&mut seen, &deck, on_deck).unwrap();
+        assert_eq!((id, cues[2]), (42, Some(200)));
+        deck.hot_cues[1] = None;
+        assert!(
+            cue_change(&mut seen, &deck, on_deck).is_some(),
+            "deleting is a change too"
+        );
+        // A file played without the library has nowhere to save to.
+        deck.hot_cues[3] = Some(9);
+        let no_library = Some(DeckTrack {
+            track_id: 7,
+            library_id: None,
+        });
+        assert_eq!(cue_change(&mut seen, &deck, no_library), None);
     }
 }

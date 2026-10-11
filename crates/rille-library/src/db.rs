@@ -5,13 +5,13 @@
 
 use std::path::{Path, PathBuf};
 
-use rille_core::BeatGrid;
+use rille_core::{BeatGrid, HOT_CUES};
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::tags::TrackInfo;
 
 /// The schema this build writes.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -152,6 +152,17 @@ impl Library {
             tx.execute_batch(
                 "ALTER TABLE tracks ADD COLUMN analysis_rev INTEGER NOT NULL DEFAULT 0;
                 PRAGMA user_version = 2;",
+            )?;
+        }
+        if version < 3 {
+            tx.execute_batch(
+                "CREATE TABLE hot_cues (
+                    track_id INTEGER NOT NULL REFERENCES tracks (id) ON DELETE CASCADE,
+                    slot INTEGER NOT NULL,
+                    seconds REAL NOT NULL,
+                    PRIMARY KEY (track_id, slot)
+                );
+                PRAGMA user_version = 3;",
             )?;
         }
         tx.commit()?;
@@ -314,6 +325,49 @@ impl Library {
         Ok(())
     }
 
+    /// Hot cues of a track, by slot, in seconds.
+    pub fn hot_cues(&self, id: i64) -> Result<[Option<f64>; HOT_CUES], DbError> {
+        let mut cues = [None; HOT_CUES];
+        let mut stmt = self
+            .conn
+            .prepare("SELECT slot, seconds FROM hot_cues WHERE track_id = ?1")?;
+        let rows = stmt.query_map(params![id], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?))
+        })?;
+        for row in rows {
+            let (slot, seconds) = row?;
+            if let Some(c) = usize::try_from(slot).ok().and_then(|s| cues.get_mut(s)) {
+                *c = Some(seconds);
+            }
+        }
+        Ok(cues)
+    }
+
+    /// Replace all hot cues of a track.
+    pub fn set_hot_cues(&mut self, id: i64, cues: &[Option<f64>; HOT_CUES]) -> Result<(), DbError> {
+        let tx = self.conn.transaction()?;
+        tx.execute("DELETE FROM hot_cues WHERE track_id = ?1", params![id])?;
+        for (slot, seconds) in cues.iter().enumerate() {
+            if let Some(s) = seconds.filter(|s| s.is_finite() && *s >= 0.0) {
+                tx.execute(
+                    "INSERT INTO hot_cues (track_id, slot, seconds) VALUES (?1, ?2, ?3)",
+                    params![id, slot as i64, s],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The user corrected the beatgrid (moved it, halved or doubled the tempo, tapped).
+    pub fn set_grid(&self, id: i64, grid: Option<BeatGrid>) -> Result<(), DbError> {
+        self.conn.execute(
+            "UPDATE tracks SET bpm = ?2, first_beat = ?3 WHERE id = ?1",
+            params![id, grid.map(|g| g.bpm), grid.map(|g| g.first_beat)],
+        )?;
+        Ok(())
+    }
+
     /// Analyse again (e.g. its cached peaks went missing).
     pub fn set_pending(&self, id: i64) -> Result<(), DbError> {
         self.conn.execute(
@@ -407,6 +461,33 @@ mod tests {
         );
         lib.set_analyzed(t.id, t.grid, 10.0).unwrap();
         assert_eq!(lib.track(t.id).unwrap().unwrap().analysis_rev, 1);
+    }
+
+    #[test]
+    fn hot_cues_and_a_corrected_grid_are_kept() {
+        let mut lib = Library::open_in_memory().unwrap();
+        let (id, _) = lib
+            .upsert(Path::new("/m/a.mp3"), STAMP, &info("A"))
+            .unwrap();
+        let mut cues = [None; HOT_CUES];
+        cues[0] = Some(1.5);
+        cues[7] = Some(200.25);
+        lib.set_hot_cues(id, &cues).unwrap();
+        assert_eq!(lib.hot_cues(id).unwrap(), cues);
+        cues[0] = None;
+        cues[3] = Some(f64::NAN); // never stored
+        lib.set_hot_cues(id, &cues).unwrap();
+        let mut expected = [None; HOT_CUES];
+        expected[7] = Some(200.25);
+        assert_eq!(lib.hot_cues(id).unwrap(), expected);
+
+        let grid = BeatGrid {
+            bpm: 64.0,
+            first_beat: 0.3,
+        };
+        lib.set_grid(id, Some(grid)).unwrap();
+        assert_eq!(lib.track(id).unwrap().unwrap().grid, Some(grid));
+        assert_eq!(lib.hot_cues(9_999).unwrap(), [None; HOT_CUES]);
     }
 
     #[test]

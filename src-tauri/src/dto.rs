@@ -2,7 +2,7 @@
 //! types so the engine never depends on serde or Tauri.
 
 use rille_core::{
-    CrossfaderCurve, DeckCommand, DeckId, EqBand, MixerCommand, Snapshot, TempoRange,
+    CrossfaderCurve, DeckCommand, DeckId, EqBand, HOT_CUES, MixerCommand, Snapshot, TempoRange,
     TransitionKind,
 };
 use rille_engine::output::DeviceInfo;
@@ -160,6 +160,23 @@ pub enum DeckAction {
     Reverse {
         on: bool,
     },
+    Sync,
+    SyncLock {
+        on: bool,
+    },
+    BeatLoop {
+        beats: f32,
+    },
+    LoopExit,
+    BeatJump {
+        beats: f32,
+    },
+    HotCue {
+        slot: u8,
+    },
+    HotCueClear {
+        slot: u8,
+    },
 }
 
 impl DeckAction {
@@ -203,6 +220,13 @@ impl From<DeckAction> for DeckCommand {
             DeckAction::Keylock { on } => DeckCommand::Keylock(on),
             DeckAction::Bend { direction } => DeckCommand::BendHold(direction.signum()),
             DeckAction::Reverse { on } => DeckCommand::Reverse(on),
+            DeckAction::Sync => DeckCommand::Sync,
+            DeckAction::SyncLock { on } => DeckCommand::SyncLock(on),
+            DeckAction::BeatLoop { beats } => DeckCommand::BeatLoop(beats),
+            DeckAction::LoopExit => DeckCommand::LoopExit,
+            DeckAction::BeatJump { beats } => DeckCommand::BeatJump(beats),
+            DeckAction::HotCue { slot } => DeckCommand::HotCue(slot),
+            DeckAction::HotCueClear { slot } => DeckCommand::HotCueClear(slot),
         }
     }
 }
@@ -290,6 +314,20 @@ pub struct DeckFrame {
     pub rate: f32,
     pub reverse: bool,
     pub scratching: bool,
+    pub grid: Option<GridFrame>,
+    /// Hot cues in engine frames, `null` for empty pads.
+    pub hot_cues: [Option<u64>; HOT_CUES],
+    /// Active loop `[start, end]` in engine frames.
+    pub loop_range: Option<[u64; 2]>,
+    pub sync_lock: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridFrame {
+    pub bpm: f64,
+    /// Seconds.
+    pub first_beat: f64,
 }
 
 /// One state update, sent at most 60 times per second.
@@ -338,6 +376,13 @@ impl StateFrame {
             rate: d.rate,
             reverse: d.reverse,
             scratching: d.scratching,
+            grid: d.grid.map(|g| GridFrame {
+                bpm: g.bpm,
+                first_beat: g.first_beat,
+            }),
+            hot_cues: d.hot_cues,
+            loop_range: d.loop_range.map(|(a, b)| [a, b]),
+            sync_lock: d.sync_lock,
         };
         StateFrame {
             frame_clock: s.frame_clock,
@@ -455,6 +500,30 @@ mod tests {
         );
         let a: DeckAction = serde_json::from_str(r#"{"type":"reverse","on":true}"#).unwrap();
         assert_eq!(DeckCommand::from(a), DeckCommand::Reverse(true));
+        for (json, cmd) in [
+            (r#"{"type":"sync"}"#, DeckCommand::Sync),
+            (
+                r#"{"type":"syncLock","on":true}"#,
+                DeckCommand::SyncLock(true),
+            ),
+            (
+                r#"{"type":"beatLoop","beats":0.25}"#,
+                DeckCommand::BeatLoop(0.25),
+            ),
+            (r#"{"type":"loopExit"}"#, DeckCommand::LoopExit),
+            (
+                r#"{"type":"beatJump","beats":-16}"#,
+                DeckCommand::BeatJump(-16.0),
+            ),
+            (r#"{"type":"hotCue","slot":7}"#, DeckCommand::HotCue(7)),
+            (
+                r#"{"type":"hotCueClear","slot":0}"#,
+                DeckCommand::HotCueClear(0),
+            ),
+        ] {
+            let a: DeckAction = serde_json::from_str(json).unwrap();
+            assert_eq!(DeckCommand::from(a), cmd, "{json}");
+        }
     }
 
     #[test]

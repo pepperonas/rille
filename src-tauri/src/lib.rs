@@ -14,7 +14,7 @@ use tracing_subscriber::EnvFilter;
 use audio_service::{AudioService, UiEvent};
 use commands::StateChannel;
 use controller_service::{ControllerEvent, ControllerService};
-use library_service::{LibraryEvent, LibraryService, LibraryUnavailable, worker_count};
+use library_service::{Analysis, LibraryEvent, LibraryService, LibraryUnavailable, worker_count};
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -52,6 +52,7 @@ pub fn run() {
             commands::deck_load_track,
             commands::library_tracks,
             commands::library_peaks,
+            commands::library_set_grid,
             commands::library_progress,
             commands::library_import,
             commands::library_choose_folder,
@@ -59,6 +60,7 @@ pub fn run() {
             commands::mixer_command,
             commands::controller_status,
             commands::controller_set_vinyl,
+            commands::controller_pad_mode,
             commands::midi_monitor,
         ])
         .run(tauri::generate_context!());
@@ -81,7 +83,19 @@ fn start_library(app: &tauri::App) {
     let handle = app.handle().clone();
     let notify = Arc::new(move |event: LibraryEvent| {
         let result = match event {
-            LibraryEvent::Tracks(tracks) => handle.emit("library-tracks", tracks),
+            LibraryEvent::Tracks(tracks) => {
+                // A finished analysis brings the grid to a deck that already plays the track.
+                if let Some(audio) = handle.try_state::<AudioService>() {
+                    for t in tracks.iter().filter(|t| t.analysis == Analysis::Done) {
+                        let grid = t
+                            .bpm
+                            .zip(t.first_beat)
+                            .map(|(bpm, first_beat)| rille_core::BeatGrid { bpm, first_beat });
+                        audio.update_grid(t.id, grid);
+                    }
+                }
+                handle.emit("library-tracks", tracks)
+            }
             LibraryEvent::Progress(p) => handle.emit("library-progress", p),
         };
         if let Err(e) = result {
@@ -112,7 +126,7 @@ fn deliver(app: &tauri::AppHandle, event: UiEvent) {
                 return;
             };
             if let Some(ch) = slot.as_ref()
-                && ch.send(frame).is_err()
+                && ch.send(*frame).is_err()
             {
                 *slot = None; // webview went away; it will subscribe again
             }
@@ -122,6 +136,12 @@ fn deliver(app: &tauri::AppHandle, event: UiEvent) {
         UiEvent::DeckLoadFailed(e) => app.emit("deck-load-failed", e),
         UiEvent::DeckLoadWarning(e) => app.emit("deck-load-warning", e),
         UiEvent::DeckEnded(deck) => app.emit("deck-ended", deck),
+        UiEvent::HotCuesChanged { library_id, cues } => {
+            if let Some(library) = app.try_state::<LibraryService>() {
+                library.save_hot_cues(library_id, &cues);
+            }
+            Ok(())
+        }
         UiEvent::AudioChanged(status) => app.emit("audio-changed", status),
     };
     if let Err(e) = result {

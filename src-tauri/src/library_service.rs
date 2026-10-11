@@ -13,6 +13,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration;
 
+use rille_core::{BeatGrid, HOT_CUES};
 use rille_library::analysis::analyze_file;
 use rille_library::db::{AnalysisState, DbError, FileStamp, Library, TrackRow};
 use rille_library::scan::{is_audio_file, scan};
@@ -117,6 +118,9 @@ pub struct LoadInfo {
     pub title: String,
     pub artist: Option<String>,
     pub bpm: Option<f64>,
+    pub grid: Option<BeatGrid>,
+    /// Saved hot cues in seconds (filled by `with_hot_cues`).
+    pub hot_cues: [Option<f64>; HOT_CUES],
 }
 
 impl From<&TrackRow> for LoadInfo {
@@ -127,6 +131,8 @@ impl From<&TrackRow> for LoadInfo {
             title: t.title.clone(),
             artist: t.artist.clone(),
             bpm: t.grid.map(|g| g.bpm),
+            grid: t.grid,
+            hot_cues: [None; HOT_CUES],
         }
     }
 }
@@ -311,7 +317,7 @@ impl LibraryService {
         self.post_tracks(vec![track.clone()]);
         let row = self.row(track.id)?;
         self.prioritize(&row);
-        Some(LoadInfo::from(&row))
+        Some(self.load_info(&row))
     }
 
     /// Move a pending track to the front of the analysis queue.
@@ -325,6 +331,33 @@ impl LibraryService {
         }
         drop(q);
         self.shared.wake.notify_one();
+    }
+
+    /// Load info with the saved hot cues, for putting a track on a deck.
+    pub fn load_info(&self, row: &TrackRow) -> LoadInfo {
+        let mut info = LoadInfo::from(row);
+        match lock(&self.shared.db).hot_cues(row.id) {
+            Ok(cues) => info.hot_cues = cues,
+            Err(e) => tracing::warn!(%e, "could not read hot cues"),
+        }
+        info
+    }
+
+    pub fn save_hot_cues(&self, id: i64, cues: &[Option<f64>; HOT_CUES]) {
+        if let Err(e) = lock(&self.shared.db).set_hot_cues(id, cues) {
+            tracing::warn!(%e, "could not save hot cues");
+        }
+    }
+
+    /// The user corrected the grid: store it and tell the frontend.
+    pub fn set_grid(&self, id: i64, grid: Option<BeatGrid>) -> Result<(), String> {
+        lock(&self.shared.db)
+            .set_grid(id, grid)
+            .map_err(|e| e.to_string())?;
+        if let Some(row) = self.row(id) {
+            self.post_tracks(vec![row.into()]);
+        }
+        Ok(())
     }
 
     pub fn row(&self, id: i64) -> Option<TrackRow> {
