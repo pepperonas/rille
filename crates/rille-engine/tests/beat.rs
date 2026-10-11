@@ -512,3 +512,99 @@ fn at_a_crooked_tempo_the_loop_keeps_its_exact_length_on_average() {
         "mean pass {mean}, expected {expected}"
     );
 }
+
+/// Frequency from interpolated rising zero crossings (first to last crossing in `v`).
+fn precise_frequency(v: &[f32]) -> f64 {
+    let crossings: Vec<f64> = v
+        .windows(2)
+        .enumerate()
+        .filter(|(_, w)| w[0] < 0.0 && w[1] >= 0.0)
+        .map(|(i, w)| i as f64 + f64::from(w[0] / (w[0] - w[1])))
+        .collect();
+    let (first, last) = (crossings[0], crossings[crossings.len() - 1]);
+    (crossings.len() - 1) as f64 * f64::from(SR) / (last - first)
+}
+
+/// A 440 Hz tone with a 120 BPM grid, keylock on at +8 %, playing a one-beat loop at 5 s.
+fn keylock_loop_rig() -> (Engine, EngineHandle) {
+    let g = grid(120.0, 0.0);
+    let (mut engine, mut handle) = engine_pair(SR, BLOCK);
+    let frames = 30 * SR as usize;
+    let samples = (0..frames)
+        .flat_map(|i| {
+            let v = 0.5 * (i as f32 * 440.0 * std::f32::consts::TAU / SR as f32).sin();
+            [v, v]
+        })
+        .collect();
+    let load = TrackLoad {
+        grid: Some(g),
+        ..TrackLoad::new(DeckId::A, Arc::new(TrackAudio::new(1, SR, samples)))
+    };
+    assert!(handle.load_track(load).is_ok());
+    let a = |c| Command::Deck(DeckId::A, c);
+    handle.send(a(DeckCommand::TempoRange(TempoRange::Ten)));
+    handle.send(a(DeckCommand::Tempo(0.8)));
+    handle.send(a(DeckCommand::Keylock(true)));
+    handle.send(a(DeckCommand::Seek { frame: 5 * 48_000 }));
+    handle.send(a(DeckCommand::Play));
+    let mut out = vec![0.0f32; BLOCK * 2];
+    for _ in 0..(SR as usize / BLOCK) {
+        engine.process(&mut out, 2);
+    }
+    handle.send(a(DeckCommand::BeatLoop(1.0)));
+    (engine, handle)
+}
+
+#[test]
+fn a_keylock_loop_keeps_the_pitch_right_after_the_seam() {
+    // With keylock every pass must sound at the track's pitch, from its first frame. Before,
+    // each pass re-engaged the stretcher and opened with a varispeed bridge, i.e. briefly at
+    // the tempo's pitch (+8 % here).
+    let (mut engine, mut handle) = keylock_loop_rig();
+    let mut out = vec![0.0f32; BLOCK * 2];
+    let mut audio = Vec::new();
+    let mut seams = Vec::new();
+    let mut last = handle.snapshot().decks[0].position;
+    for _ in 0..(4 * SR as usize / BLOCK) {
+        engine.process(&mut out, 2);
+        audio.extend(out.as_chunks::<2>().0.iter().map(|f| f[0]));
+        let pos = handle.snapshot().decks[0].position;
+        if pos < last {
+            seams.push(audio.len() - BLOCK);
+        }
+        last = pos;
+    }
+    assert!(seams.len() >= 4, "the loop ran: {seams:?}");
+    for &s in &seams[1..seams.len() - 1] {
+        let f = precise_frequency(&audio[s + BLOCK + 300..s + BLOCK + 1500]);
+        assert!((f - 440.0).abs() < 4.0, "seam at {s}: {f} Hz");
+    }
+}
+
+#[test]
+fn leaving_a_keylock_loop_early_in_a_pass_keeps_the_pitch() {
+    // Early in a pass the stretcher has not been fed the next one yet: it plays on into the
+    // track instead of restarting (which would open with the tempo's pitch again).
+    let (mut engine, mut handle) = keylock_loop_rig();
+    let mut out = vec![0.0f32; BLOCK * 2];
+    let mut last = handle.snapshot().decks[0].position;
+    let mut seams = 0;
+    while seams < 2 {
+        engine.process(&mut out, 2);
+        let pos = handle.snapshot().decks[0].position;
+        seams += usize::from(pos < last);
+        last = pos;
+    }
+    handle.send(Command::Deck(DeckId::A, DeckCommand::LoopExit));
+    let mut audio = Vec::new();
+    for _ in 0..(SR as usize / BLOCK) {
+        engine.process(&mut out, 2);
+        audio.extend(out.as_chunks::<2>().0.iter().map(|f| f[0]));
+    }
+    let d = handle.snapshot().decks[0];
+    assert_eq!(d.loop_range, None);
+    for w in [0, 1200, 2400, 3600] {
+        let f = precise_frequency(&audio[w + 300..w + 1500]);
+        assert!((f - 440.0).abs() < 4.0, "{w} frames after leaving: {f} Hz");
+    }
+}

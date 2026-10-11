@@ -6,6 +6,12 @@ All notable changes to rille are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+- Keylock loops are seamless: the stretcher is fed the loop as one continuous stream (each
+  seam crossfaded over 4 ms) instead of restarting at every pass, so a pass no longer opens
+  with a short stretch at the tempo's pitch. Leaving or resizing a loop early in a pass keeps
+  the stretcher running, too.
+
 ### Added
 - M9 polish: global keyboard shortcuts for both decks and the mixer (physical keys, so QWERTZ
   and QWERTY match; held cue and bend let go when the window loses focus; quiet while typing or

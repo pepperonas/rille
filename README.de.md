@@ -146,7 +146,9 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
   [Signalsmith Stretch](https://signalsmith-audio.co.uk/code/stretch/). Die Latenz wird
   ausgeglichen, das gestreckte Signal liegt auf dem Abspielkopf (gemessen: innerhalb 2 ms);
   nach einem Cue-Sprung überbrückt ein kurzes Varispeed-Stück den Anlauf des Stretchers — ohne
-  Lücke.
+  Lücke. Loops laufen mit Keylock nahtlos: der Stretcher bekommt den Loop als einen
+  durchgehenden Strom (jede Naht über 4 ms überblendet), jeder Durchlauf hat ab dem ersten
+  Sample die richtige Tonhöhe.
 - **Pitch-Bend, Scratch, Suchlauf, Reverse** — − / + halten schiebt (±4 %), der Jog-Rand
   bendet, der Teller scratcht im Vinyl-Modus, Shift + Teller spult, REV spielt rückwärts,
   solange gehalten, und stoppt am Trackanfang.

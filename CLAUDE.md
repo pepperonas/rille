@@ -96,8 +96,14 @@ Das Frontend rechnet nichts Audio-Relevantes.
   tragen den Überhang samt Nachkommaanteil in den nächsten Durchlauf. Audio-Vergleiche über
   Loop-Durchläufe erst ab dem zweiten Durchlauf: der Isolator-EQ ist ein IIR mit Gedächtnis.
 - **Loop-Regel:** nur das *Überschreiten* des Loop-Endes springt zurück (`wrap_loop(from)`);
-  ein Sprung über das Ende hinaus verlässt den Loop (`apply_deck`). Keylock-Loops beginnen jeden
-  Durchlauf mit der Varispeed-Brücke (bekannte Grenze, Plan M7).
+  ein Sprung über das Ende hinaus verlässt den Loop (`apply_deck`).
+- **Keylock-Loops** laufen ohne Neustart: der Stretcher bekommt den Loop als einen Strom
+  (`feed_loop`, `stream_frame` – nach dem Loop-Ende wieder der Loop-Anfang, Naht über 4 ms
+  überblendet), `Player::loop_wrap` versetzt dann nur den Abspielkopf. `feed`/`bridge_pos`
+  zählen dabei im *Strom*, nicht im Track. Ein Loop, den der Feed schon überholt hat, oder
+  einer, der sich ändert, während der Feed bereits im nächsten Durchlauf ist, fällt auf den
+  alten Weg zurück (ausblenden, neu ansetzen). Pitch-Tests messen die Frequenz direkt hinter
+  der Naht – die Varispeed-Brücke hätte dort die Tonhöhe des Tempos.
 - Vom Nutzer korrigierte Grids (`grid_user`, Schema v4) überschreibt keine Analyse; erst eine
   geänderte Datei setzt das zurück.
 - **Kopfhörer auf zweitem Gerät:** Engine → `cue_tx`-Ring → `DriftReader` im Callback des

@@ -53,4 +53,5 @@ Last während der Analyse, Speicher je Track-Minute.
   gemessen), Leerzustand ohne Gerät, Einstellungen bleiben nach Reload.
 
 ## Bekannte Grenzen (bleiben)
-- Nahtlose Keylock-Loops (siehe M7) – braucht einen Stretcher-Sprung ohne Neustart; offen.
+- ~~Nahtlose Keylock-Loops~~ – nachgezogen nach M9: der Stretcher wird mit dem Loop als
+  durchgehendem Strom gefüttert, statt an jeder Naht neu anzulaufen.

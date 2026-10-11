@@ -192,7 +192,9 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 - **Keylock** — keeps the pitch while the tempo changes, with
   [Signalsmith Stretch](https://signalsmith-audio.co.uk/code/stretch/). Its latency is
   compensated, so the stretched audio lines up with the playhead (measured: within 2 ms), and
-  after a cue jump a short varispeed bridge covers the stretcher's start-up — no gap.
+  after a cue jump a short varispeed bridge covers the stretcher's start-up — no gap. Loops
+  run seamlessly with keylock: the stretcher is fed the loop as one continuous stream (each
+  seam crossfaded over 4 ms), so every pass keeps the pitch from its first frame.
 - **Pitch bend, scratch, search, reverse** — hold − / + to nudge (±4 %), the jog rim bends,
   the platter scratches in vinyl mode, Shift + platter searches, REV plays backwards while held
   and stops at the track start.

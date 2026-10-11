@@ -331,9 +331,15 @@ impl Deck {
         }
         let len = (end - start).max(1) as f64;
         let over = (pos - end as f64).rem_euclid(len);
+        let to = start as f64 + over;
+        // With keylock the stretcher has been fed the next pass already: nothing restarts.
+        if self.player.loop_wrap(to) {
+            self.transport.position = to as u64;
+            return;
+        }
         // Audio was rendered since the last jump: the tail must start from what was heard now.
         self.tail_unheard = false;
-        self.jump(start as f64 + over);
+        self.jump(to);
     }
 
     /// EQ and filter, in place on the rendered block.
@@ -380,6 +386,7 @@ impl Deck {
         // The length can still change while the track loads (an MP3 estimate is corrected
         // once decoding finishes).
         self.transport.frames = track.frames() as u64;
+        self.player.set_loop(self.loop_range);
         let mut done = 0;
         let mut ended = false;
         while done < frames {
@@ -1712,6 +1719,54 @@ mod tests {
             }
         }
         assert_eq!(quiet_blocks, 0, "no gap after the jump");
+    }
+
+    #[test]
+    fn keylock_loops_do_not_click_at_the_seam_or_when_changed() {
+        // Each case: commands sent once the loop runs, then several seconds of passes. 0.37
+        // beats is off the test partials' common period, so every seam joins different phases.
+        let cases: [(&str, &[DeckCommand]); 4] = [
+            ("passes", &[]),
+            ("halved", &[DeckCommand::BeatLoop(0.25)]),
+            ("left", &[DeckCommand::LoopExit]),
+            ("keylock off", &[DeckCommand::Keylock(false)]),
+        ];
+        for (name, cmds) in cases {
+            let (mut engine, mut h) = engine_pair(SR, 256);
+            let load = TrackLoad {
+                grid: Some(BeatGrid {
+                    bpm: 120.0,
+                    first_beat: 0.0,
+                }),
+                ..TrackLoad::new(DeckId::A, rich_track(30))
+            };
+            assert!(h.load_track(load).is_ok());
+            h.send(mix(MixerCommand::Crossfader(0.0)));
+            h.send(deck_a(DeckCommand::Keylock(true)));
+            h.send(deck_a(DeckCommand::Tempo(0.5)));
+            h.send(deck_a(DeckCommand::Seek {
+                frame: 5 * u64::from(SR) + 7_000,
+            }));
+            h.send(deck_a(DeckCommand::Play));
+            settle(&mut engine);
+            let mut prev = 0.0;
+            largest_step(&mut engine, 1, &mut prev);
+            let steady = largest_step(&mut engine, 8, &mut prev);
+            h.send(deck_a(DeckCommand::BeatLoop(0.37)));
+            let looping = largest_step(&mut engine, 100, &mut prev);
+            assert!(
+                looping <= steady * 1.5,
+                "{name}: step {looping} vs steady {steady} while looping"
+            );
+            for c in cmds {
+                h.send(deck_a(*c));
+            }
+            let after = largest_step(&mut engine, 200, &mut prev);
+            assert!(
+                after <= steady * 1.5,
+                "{name}: step {after} vs steady {steady}"
+            );
+        }
     }
 
     #[test]

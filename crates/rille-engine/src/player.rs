@@ -94,6 +94,14 @@ pub struct Player {
     fade_len: usize,
     fade_feed: f64,
     fade_rate: f32,
+    /// The deck's loop, as the engine last reported it.
+    loop_range: Option<(u64, u64)>,
+    /// The loop the stretcher's input is built with. `feed` (and `bridge_pos`) then count in a
+    /// virtual stream that runs on past the loop end into the loop start again, so the
+    /// stretcher plays through every pass instead of restarting at the seam.
+    feed_loop: Option<(u64, u64)>,
+    /// `feed_loop` of a stretcher that is fading out.
+    fade_loop: Option<(u64, u64)>,
 }
 
 #[inline]
@@ -104,15 +112,62 @@ fn hermite(xm1: f32, x0: f32, x1: f32, x2: f32, t: f32) -> f32 {
     ((c3 * t + c2) * t + c1) * t + x0
 }
 
-/// Copy track frames from `first` on into `buf` (interleaved stereo); before the start is silence.
-fn fill_input(track: &TrackAudio, first: i64, buf: &mut [f32]) {
+#[inline]
+fn track_frame(track: &TrackAudio, i: i64) -> [f32; 2] {
+    if i < 0 {
+        [0.0; 2]
+    } else {
+        track.frame(i as usize)
+    }
+}
+
+/// Frame `i` of the stream a stretcher is fed: the track, or with a loop the track up to the
+/// loop end and then the loop over and over. Each seam crossfades over `seam` frames from what
+/// follows the loop end into the loop start – the same declick a varispeed loop gets.
+#[inline]
+fn stream_frame(track: &TrackAudio, lp: Option<(u64, u64)>, seam: usize, i: i64) -> [f32; 2] {
+    match lp {
+        Some((start, end)) if end > start && i >= end as i64 => {
+            let len = (end - start) as i64;
+            let o = (i - end as i64).rem_euclid(len);
+            let new = track_frame(track, start as i64 + o);
+            let x = (seam as i64).min(len);
+            if o < x {
+                let old = track_frame(track, end as i64 + o);
+                let g = o as f32 / x as f32;
+                [
+                    old[0] + g * (new[0] - old[0]),
+                    old[1] + g * (new[1] - old[1]),
+                ]
+            } else {
+                new
+            }
+        }
+        _ => track_frame(track, i),
+    }
+}
+
+/// Where position `f` of a looped stream lies in the track.
+fn stream_to_track(lp: Option<(u64, u64)>, f: f64) -> f64 {
+    match lp {
+        Some((start, end)) if end > start && f >= end as f64 => {
+            start as f64 + (f - end as f64).rem_euclid((end - start) as f64)
+        }
+        _ => f,
+    }
+}
+
+/// Copy stream frames from `first` on into `buf` (interleaved stereo); before the start is
+/// silence.
+fn fill_input(
+    track: &TrackAudio,
+    lp: Option<(u64, u64)>,
+    seam: usize,
+    first: i64,
+    buf: &mut [f32],
+) {
     for (k, frame) in buf.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-        let i = first + k as i64;
-        *frame = if i < 0 {
-            [0.0; 2]
-        } else {
-            track.frame(i as usize)
-        };
+        *frame = stream_frame(track, lp, seam, first + k as i64);
     }
 }
 
@@ -129,6 +184,28 @@ pub fn sample_at(track: &TrackAudio, position: f64) -> [f32; 2] {
             track.frame(k as usize)
         }
     };
+    let (a, b, c, d) = (at(i - 1), at(i), at(i + 1), at(i + 2));
+    [
+        hermite(a[0], b[0], c[0], d[0], t),
+        hermite(a[1], b[1], c[1], d[1], t),
+    ]
+}
+
+/// `sample_at` on a looped stream (see `stream_frame`).
+#[inline]
+fn sample_stream(
+    track: &TrackAudio,
+    lp: Option<(u64, u64)>,
+    seam: usize,
+    position: f64,
+) -> [f32; 2] {
+    if lp.is_none() {
+        return sample_at(track, position);
+    }
+    let i = position.floor();
+    let t = (position - i) as f32;
+    let i = i as i64;
+    let at = |k: i64| stream_frame(track, lp, seam, k);
     let (a, b, c, d) = (at(i - 1), at(i), at(i + 1), at(i + 2));
     [
         hermite(a[0], b[0], c[0], d[0], t),
@@ -172,6 +249,9 @@ impl Player {
             fade_len,
             fade_feed: 0.0,
             fade_rate: 0.0,
+            loop_range: None,
+            feed_loop: None,
+            fade_loop: None,
         }
     }
 
@@ -236,7 +316,62 @@ impl Player {
             self.fade_left = self.fade_len;
             self.fade_feed = self.feed;
             self.fade_rate = self.last_rate.clamp(0.0, MAX_KEYLOCK_RATE);
+            self.fade_loop = self.feed_loop;
         }
+        self.feed_loop = None;
+    }
+
+    /// The deck's loop (or none). With keylock the stretcher's input follows it, so every pass
+    /// plays on through the stretcher; see `loop_wrap`.
+    pub fn set_loop(&mut self, lp: Option<(u64, u64)>) {
+        if lp == self.loop_range {
+            return;
+        }
+        self.loop_range = lp;
+        if self.feed_loop.is_some() && self.feed_loop != lp {
+            // The stretcher holds input built with the old loop. Still in the same pass (the
+            // feed has not wrapped ahead of the playhead), that input is plain track and the
+            // stretcher plays on; otherwise it fades out and re-engages.
+            let f = stream_to_track(self.feed_loop, self.feed);
+            if self.keylock_engaged && f >= self.playhead {
+                self.feed = f;
+                self.bridge_pos = stream_to_track(self.feed_loop, self.bridge_pos);
+                self.feed_loop = None;
+            } else {
+                self.leave_keylock();
+            }
+        }
+        // A new loop the feed has not passed yet: build the input with it from now on.
+        if let Some((start, end)) = lp
+            && self.keylock_engaged
+            && self.feed_loop.is_none()
+            && end > start
+            && self.feed < end as f64
+            && self.bridge_pos < end as f64
+        {
+            self.feed_loop = lp;
+        }
+    }
+
+    /// The engine loops back to `to`. With keylock and input built with this loop the
+    /// stretcher has already been fed the next pass: only the playhead moves, nothing restarts.
+    /// Returns `false` when the caller has to jump instead.
+    pub fn loop_wrap(&mut self, to: f64) -> bool {
+        let Some((start, end)) = self.feed_loop else {
+            return false;
+        };
+        if !self.keylock_engaged || self.loop_range != self.feed_loop {
+            return false;
+        }
+        self.playhead = to;
+        // Keep the stream positions small: one pass back maps to the same audio while it stays
+        // past the loop end.
+        let len = (end - start) as f64;
+        while self.feed - len >= end as f64 && self.bridge_pos - len >= end as f64 {
+            self.feed -= len;
+            self.bridge_pos -= len;
+        }
+        true
     }
 
     /// New track or a jump (cue, seek): continue from `position`.
@@ -250,6 +385,8 @@ impl Player {
         self.jump_to(0.0);
         // The old track is gone: nothing left to fade out.
         self.fade_left = 0;
+        self.fade_loop = None;
+        self.loop_range = None;
         // A load during a scratch: back to tempo smoothing, as a release would do.
         self.rate.set_time(self.sample_rate, TEMPO_SMOOTHING_MS);
         self.scratching = false;
@@ -414,7 +551,13 @@ impl Player {
         let first = self.fade_feed.floor() as i64;
         let wanted = ((self.fade_feed + advance).floor() as i64 - first).max(0) as usize;
         let n_in = wanted.min(self.stretch_in.len() / 2);
-        fill_input(track, first, &mut self.stretch_in[..n_in * 2]);
+        fill_input(
+            track,
+            self.fade_loop,
+            self.fade_len,
+            first,
+            &mut self.stretch_in[..n_in * 2],
+        );
         let stretched = &mut self.stretch_out[..frames * 2];
         self.stretch
             .process(&self.stretch_in[..n_in * 2], &mut *stretched);
@@ -463,10 +606,22 @@ impl Player {
         let output_latency = self.stretch.output_latency() as f64;
         // Feed ahead so the stretched output lines up with the playhead.
         self.feed = self.playhead + input_latency + output_latency * f64::from(rate);
+        // Inside a loop the input is the looped stream from the start (the playhead is still
+        // before the loop end, where stream and track coincide).
+        self.feed_loop = match self.loop_range {
+            Some((start, end)) if end > start && self.playhead < end as f64 => self.loop_range,
+            _ => None,
+        };
         // Pre-roll with the input just before the feed point, so there is no silent gap.
         let preroll = self.preroll.len() / 2;
         let start = self.feed.floor() as i64 - preroll as i64;
-        fill_input(track, start, &mut self.preroll);
+        fill_input(
+            track,
+            self.feed_loop,
+            self.fade_len,
+            start,
+            &mut self.preroll,
+        );
         self.stretch.seek(&self.preroll, f64::from(rate));
         self.keylock_engaged = true;
         self.since_engage = 0;
@@ -496,7 +651,7 @@ impl Player {
             rate = self.rate.tick() * (1.0 + self.bend.tick());
             advance += f64::from(rate);
             if bridging {
-                *frame = sample_at(track, self.bridge_pos);
+                *frame = sample_stream(track, self.feed_loop, self.fade_len, self.bridge_pos);
                 self.bridge_pos += f64::from(rate);
             }
         }
@@ -505,7 +660,13 @@ impl Player {
         let first = self.feed.floor() as i64;
         let wanted = ((self.feed + advance).floor() as i64 - first).max(0) as usize;
         let n_in = wanted.min(self.stretch_in.len() / 2);
-        fill_input(track, first, &mut self.stretch_in[..n_in * 2]);
+        fill_input(
+            track,
+            self.feed_loop,
+            self.fade_len,
+            first,
+            &mut self.stretch_in[..n_in * 2],
+        );
         let stretched = &mut self.stretch_out[..frames * 2];
         self.stretch
             .process(&self.stretch_in[..n_in * 2], &mut *stretched);
