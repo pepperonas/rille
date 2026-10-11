@@ -1,6 +1,7 @@
 //! Track library: import, decoding, BPM/beatgrid analysis, waveform peaks and the SQLite cache.
 
 pub mod analysis;
+pub mod db;
 pub mod decode;
 pub mod resample;
 pub mod scan;
