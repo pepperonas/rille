@@ -29,6 +29,18 @@ impl EqBand {
     }
 }
 
+/// Where the headphone (cue) signal goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CueRoute {
+    /// Not rendered anywhere.
+    #[default]
+    Off,
+    /// Channels 3/4 of the main output device (needs four outputs).
+    Channels34,
+    /// A second device, through the cue ring.
+    Ring,
+}
+
 /// The transition effect that the Transition FX button fires on the active deck.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TransitionKind {
@@ -179,6 +191,18 @@ pub enum MixerCommand {
     TransitionFx,
     /// Select the next transition effect.
     CycleTransitionFx,
+    /// Channel on the headphone (cue) bus, taken before the channel fader.
+    HeadphoneCue(DeckId, bool),
+    /// Master on the headphone bus too.
+    MasterCue(bool),
+    /// Controller buttons: flip the state.
+    ToggleHeadphoneCue(DeckId),
+    ToggleMasterCue,
+    /// Headphone blend: 0.0 = cue only, 1.0 = master only.
+    CueMix(f32),
+    /// Headphone level, 0.0..=1.0 with the channel fader taper.
+    CueLevel(f32),
+    CueRoute(CueRoute),
 }
 
 /// Everything the engine accepts through its command queues. Small and `Copy` so it can travel

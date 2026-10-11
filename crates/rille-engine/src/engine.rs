@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use rille_core::{
-    BeatGrid, Command, CrossfaderCurve, DeckCommand, DeckId, DeckSnapshot, HOT_CUES, MixerCommand,
-    Snapshot, TrackAudio,
+    BeatGrid, Command, CrossfaderCurve, CueRoute, DeckCommand, DeckId, DeckSnapshot, HOT_CUES,
+    MixerCommand, Snapshot, TrackAudio,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 use triple_buffer::{Input, Output};
@@ -83,6 +83,8 @@ pub struct EngineIo {
     garbage_tx: Producer<Arc<TrackAudio>>,
     events_tx: Producer<EngineEvent>,
     snapshot_tx: Input<Snapshot>,
+    /// Headphone signal for a second device (read by `cue::DriftReader`).
+    cue_tx: Producer<f32>,
 }
 
 /// Sending end of a command queue for exactly one producer thread (e.g. the controller).
@@ -114,6 +116,7 @@ pub struct EngineHandle {
     garbage_rx: Consumer<Arc<TrackAudio>>,
     events_rx: Consumer<EngineEvent>,
     snapshot_rx: Output<Snapshot>,
+    cue_rx: Option<Consumer<f32>>,
     dropped_commands: u32,
 }
 
@@ -169,6 +172,11 @@ impl EngineHandle {
         n
     }
 
+    /// The reading end of the headphone ring, for the second-device stream. Can be taken once.
+    pub fn take_cue_reader(&mut self) -> Option<Consumer<f32>> {
+        self.cue_rx.take()
+    }
+
     pub fn next_event(&mut self) -> Option<EngineEvent> {
         self.events_rx.pop().ok()
     }
@@ -182,6 +190,7 @@ pub fn engine_pair(sample_rate: u32, max_block: usize) -> (Engine, EngineHandle)
     let (track_tx, track_rx) = RingBuffer::new(TRACK_QUEUE);
     let (garbage_tx, garbage_rx) = RingBuffer::new(GARBAGE_QUEUE);
     let (events_tx, events_rx) = RingBuffer::new(EVENT_QUEUE);
+    let (cue_tx, cue_rx) = crate::cue::cue_ring();
     let initial = Snapshot {
         sample_rate,
         ..Engine::initial_snapshot()
@@ -194,6 +203,7 @@ pub fn engine_pair(sample_rate: u32, max_block: usize) -> (Engine, EngineHandle)
         garbage_tx,
         events_tx,
         snapshot_tx,
+        cue_tx,
     };
     let handle = EngineHandle {
         ui_tx,
@@ -205,6 +215,7 @@ pub fn engine_pair(sample_rate: u32, max_block: usize) -> (Engine, EngineHandle)
         garbage_rx,
         events_rx,
         snapshot_rx,
+        cue_rx: Some(cue_rx),
         dropped_commands: 0,
     };
     (Engine::new(sample_rate, max_block, io), handle)
@@ -436,6 +447,17 @@ pub struct Engine {
     transition: Transition,
     frame_clock: u64,
     xruns: u32,
+    cue: [bool; 2],
+    /// Per channel: trim while on the cue bus, else 0 (smoothed: no click when switching).
+    cue_gain: [Smoother; 2],
+    master_cue: bool,
+    master_cue_gain: Smoother,
+    cue_mix: f32,
+    cue_mix_gain: Smoother,
+    cue_level: f32,
+    cue_level_gain: Smoother,
+    cue_meter: PeakMeter,
+    cue_route: CueRoute,
 }
 
 impl Engine {
@@ -447,6 +469,8 @@ impl Engine {
             master_gain: 1.0,
             eq: [[0.5; 3]; 2],
             filter: [0.5; 2],
+            cue_mix: 0.5,
+            cue_level: 0.8,
             ..Snapshot::default()
         }
     }
@@ -471,6 +495,23 @@ impl Engine {
             master_meter: PeakMeter::new(sample_rate),
             pending_drops: Default::default(),
             transition: Transition::new(sample_rate),
+            cue: [false; 2],
+            cue_gain: [
+                Smoother::new(sample_rate, LEVEL_SMOOTHING_MS, 0.0),
+                Smoother::new(sample_rate, LEVEL_SMOOTHING_MS, 0.0),
+            ],
+            master_cue: false,
+            master_cue_gain: Smoother::new(sample_rate, LEVEL_SMOOTHING_MS, 0.0),
+            cue_mix: defaults.cue_mix,
+            cue_mix_gain: Smoother::new(sample_rate, LEVEL_SMOOTHING_MS, defaults.cue_mix),
+            cue_level: defaults.cue_level,
+            cue_level_gain: Smoother::new(
+                sample_rate,
+                LEVEL_SMOOTHING_MS,
+                channel_gain(defaults.cue_level),
+            ),
+            cue_meter: PeakMeter::new(sample_rate),
+            cue_route: CueRoute::Off,
             frame_clock: 0,
             xruns: 0,
         };
@@ -529,10 +570,17 @@ impl Engine {
         let [a, b] = &mut self.decks;
         let mut deck_peak = [[0.0f32; 2]; 2];
         let mut master_peak = [0.0f32; 2];
+        let mut cue_peak = [0.0f32; 2];
+        let route = self.cue_route;
+        let [cga, cgb] = &mut self.cue_gain;
         for i in 0..frames {
             let ga = a.gain.tick();
             let gb = b.gain.tick();
             let gm = self.master_gain.tick();
+            // Headphone bus: pre-fader, so read before channel gain and effects.
+            let (ca, cb) = (cga.tick(), cgb.tick());
+            let cue_l = a.buffer[2 * i] * ca + b.buffer[2 * i] * cb;
+            let cue_r = a.buffer[2 * i + 1] * ca + b.buffer[2 * i + 1] * cb;
             let (mut al, mut ar) = (a.buffer[2 * i] * ga, a.buffer[2 * i + 1] * ga);
             let (mut bl, mut br) = (b.buffer[2 * i] * gb, b.buffer[2 * i + 1] * gb);
             match fx_deck {
@@ -545,16 +593,34 @@ impl Engine {
             deck_peak[0] = [deck_peak[0][0].max(al.abs()), deck_peak[0][1].max(ar.abs())];
             deck_peak[1] = [deck_peak[1][0].max(bl.abs()), deck_peak[1][1].max(br.abs())];
             master_peak = [master_peak[0].max(l.abs()), master_peak[1].max(r.abs())];
+            let mc = self.master_cue_gain.tick();
+            let mix = self.cue_mix_gain.tick();
+            let level = self.cue_level_gain.tick();
+            let hp_l = level * ((1.0 - mix) * (cue_l + mc * l) + mix * l);
+            let hp_r = level * ((1.0 - mix) * (cue_r + mc * r) + mix * r);
+            cue_peak = [cue_peak[0].max(hp_l.abs()), cue_peak[1].max(hp_r.abs())];
             let frame = &mut out[i * channels..(i + 1) * channels];
             frame[0] = l;
             if channels > 1 {
                 frame[1] = r;
                 frame[2..].fill(0.0);
             }
+            match route {
+                CueRoute::Channels34 if channels >= 4 => {
+                    frame[2] = hp_l;
+                    frame[3] = hp_r;
+                }
+                // Full ring (no reader, or it stalls): dropped, never blocking.
+                CueRoute::Ring => {
+                    let _ = crate::cue::push_frame(&mut self.io.cue_tx, hp_l, hp_r);
+                }
+                _ => {}
+            }
         }
         a.meter.update(deck_peak[0], frames);
         b.meter.update(deck_peak[1], frames);
         self.master_meter.update(master_peak, frames);
+        self.cue_meter.update(cue_peak, frames);
         self.frame_clock += frames as u64;
 
         if let Outcome::Finished { deck, pause: true } = self.transition.end_of_block() {
@@ -937,6 +1003,13 @@ impl Engine {
                 }
             }
             MixerCommand::CycleTransitionFx => self.transition.cycle(),
+            MixerCommand::HeadphoneCue(d, on) => self.cue[d.index()] = on,
+            MixerCommand::MasterCue(on) => self.master_cue = on,
+            MixerCommand::ToggleHeadphoneCue(d) => self.cue[d.index()] ^= true,
+            MixerCommand::ToggleMasterCue => self.master_cue ^= true,
+            MixerCommand::CueMix(v) => self.cue_mix = unit(v),
+            MixerCommand::CueLevel(v) => self.cue_level = unit(v),
+            MixerCommand::CueRoute(route) => self.cue_route = route,
         }
         self.update_gain_targets();
     }
@@ -947,7 +1020,16 @@ impl Engine {
         for (i, deck) in self.decks.iter_mut().enumerate() {
             deck.gain
                 .set_target(trim_gain(self.trim[i]) * channel_gain(self.channel_fader[i]) * xf[i]);
+            // The cue bus is taken before channel fader and crossfader, after trim.
+            let on = self.cue.get(i).copied().unwrap_or(false);
+            if let Some(g) = self.cue_gain.get_mut(i) {
+                g.set_target(if on { trim_gain(self.trim[i]) } else { 0.0 });
+            }
         }
+        self.master_cue_gain
+            .set_target(if self.master_cue { 1.0 } else { 0.0 });
+        self.cue_mix_gain.set_target(self.cue_mix);
+        self.cue_level_gain.set_target(channel_gain(self.cue_level));
     }
 
     fn publish_snapshot(&mut self) {
@@ -988,6 +1070,12 @@ impl Engine {
             ],
             transition: self.transition.snapshot(),
             xruns: self.xruns,
+            cue: self.cue,
+            master_cue: self.master_cue,
+            cue_mix: self.cue_mix,
+            cue_level: self.cue_level,
+            cue_peak: self.cue_meter.value(),
+            cue_route: self.cue_route,
         };
         self.io.snapshot_tx.write(snapshot);
     }

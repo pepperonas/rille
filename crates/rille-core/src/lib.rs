@@ -8,7 +8,7 @@ mod snapshot;
 mod track;
 
 pub use command::{
-    Command, CrossfaderCurve, DeckCommand, EqBand, HOT_CUES, MixerCommand, TempoRange,
+    Command, CrossfaderCurve, CueRoute, DeckCommand, EqBand, HOT_CUES, MixerCommand, TempoRange,
     TransitionKind,
 };
 pub use deck::DeckId;

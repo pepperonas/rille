@@ -12,18 +12,30 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::Engine;
 
-struct Inner {
+struct Inner<T> {
     busy: AtomicBool,
-    engine: UnsafeCell<Engine>,
+    engine: UnsafeCell<T>,
 }
 
-// SAFETY: access to `engine` is serialised by `busy` (see `try_with`); `Engine` itself is Send.
-unsafe impl Sync for Inner {}
+// SAFETY: access to the value is serialised by `busy` (see `try_with`); the value is Send.
+unsafe impl<T: Send> Sync for Inner<T> {}
 
-#[derive(Clone)]
-pub struct EngineSlot {
-    inner: Arc<Inner>,
+/// A value an audio callback borrows without waiting (the engine, or the headphone reader of
+/// a second device), shared across stream rebuilds.
+pub struct Slot<T> {
+    inner: Arc<Inner<T>>,
 }
+
+impl<T> Clone for Slot<T> {
+    fn clone(&self) -> Self {
+        Slot {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+/// The engine's slot.
+pub type EngineSlot = Slot<Engine>;
 
 /// Resets the busy flag even if the closure unwinds.
 struct Release<'a>(&'a AtomicBool);
@@ -34,9 +46,9 @@ impl Drop for Release<'_> {
     }
 }
 
-impl EngineSlot {
-    pub fn new(engine: Engine) -> EngineSlot {
-        EngineSlot {
+impl<T: Send> Slot<T> {
+    pub fn new(engine: T) -> Slot<T> {
+        Slot {
             inner: Arc::new(Inner {
                 busy: AtomicBool::new(false),
                 engine: UnsafeCell::new(engine),
@@ -47,7 +59,7 @@ impl EngineSlot {
     /// Run `f` with exclusive access to the engine, or return `None` immediately if someone
     /// else holds it. Never blocks, never allocates.
     #[inline]
-    pub fn try_with<R>(&self, f: impl FnOnce(&mut Engine) -> R) -> Option<R> {
+    pub fn try_with<R>(&self, f: impl FnOnce(&mut T) -> R) -> Option<R> {
         if self
             .inner
             .busy

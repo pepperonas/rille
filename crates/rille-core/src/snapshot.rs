@@ -1,6 +1,6 @@
 use crate::DeckId;
-use crate::command::HOT_CUES;
 use crate::command::{CrossfaderCurve, TempoRange, TransitionKind};
+use crate::command::{CueRoute, HOT_CUES};
 use crate::grid::BeatGrid;
 
 /// State of one deck as seen at the end of an audio block.
@@ -63,6 +63,14 @@ pub struct Snapshot {
     pub eq_kill: [[bool; 3]; 2],
     pub filter: [f32; 2],
     pub transition: TransitionSnapshot,
+    /// Channels on the headphone bus.
+    pub cue: [bool; 2],
+    pub master_cue: bool,
+    pub cue_mix: f32,
+    pub cue_level: f32,
+    /// Headphone signal peak, left/right.
+    pub cue_peak: [f32; 2],
+    pub cue_route: CueRoute,
     /// Output callbacks that arrived late (device under-runs).
     pub xruns: u32,
 }

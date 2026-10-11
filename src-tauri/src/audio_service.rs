@@ -12,12 +12,19 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use rille_core::{BeatGrid, Command, DeckCommand, DeckId, HOT_CUES, TrackAudio};
-use rille_engine::output::{self, OutputError, OutputRequest, OutputStream, StreamFailure};
+use rille_core::{
+    BeatGrid, Command, CueRoute, DeckCommand, DeckId, HOT_CUES, MixerCommand, TrackAudio,
+};
+use rille_engine::cue::DriftReader;
+use rille_engine::output::{
+    self, CueSlot, OutputError, OutputRequest, OutputStream, StreamFailure,
+};
 use rille_engine::{EngineEvent, EngineHandle, EngineSlot, TrackLoad, engine_pair};
 use rille_library::decode::{DecodeStream, open_stream};
 
-use crate::dto::{AudioStatus, Deck, DeckLoadFailed, DeckLoaded, StateFrame};
+use crate::dto::{
+    AudioStatus, CueSetting, CueStatus, Deck, DeckLoadFailed, DeckLoaded, StateFrame,
+};
 
 /// Largest block the engine renders at once; device buffers above this are split.
 const MAX_BLOCK: usize = 1024;
@@ -101,6 +108,9 @@ struct Shared {
     notify: Notify,
     /// What is on each deck, for grid updates and saving hot cues.
     deck_tracks: [Mutex<Option<DeckTrack>>; 2],
+    /// The headphone reader of a second device (survives stream rebuilds).
+    cue_slot: Option<CueSlot>,
+    cue: Mutex<CueState>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -190,7 +200,10 @@ fn run_guarded(
 impl AudioService {
     pub fn start(notify: Notify) -> AudioService {
         let sample_rate = pick_engine_rate(&output::device_rates(None));
-        let (engine, handle) = engine_pair(sample_rate, MAX_BLOCK);
+        let (engine, mut handle) = engine_pair(sample_rate, MAX_BLOCK);
+        let cue_slot = handle
+            .take_cue_reader()
+            .map(|reader| CueSlot::new(DriftReader::new(reader, cue_target(0, 0))));
         let (tx_a, rx_a) = mpsc::channel();
         let (tx_b, rx_b) = mpsc::channel();
         let service = AudioService {
@@ -213,6 +226,14 @@ impl AudioService {
                 recovering: AtomicBool::new(false),
                 notify,
                 deck_tracks: [Mutex::new(None), Mutex::new(None)],
+                cue_slot,
+                cue: Mutex::new(CueState {
+                    stream: None,
+                    setting: CueSetting::Off,
+                    active: false,
+                    target: cue_target(0, 0),
+                    error: None,
+                }),
             }),
         };
         service.spawn_loader(DeckId::A, rx_a);
@@ -278,6 +299,15 @@ impl AudioService {
     }
 
     pub fn status(&self) -> AudioStatus {
+        // Locks one at a time (output, then cue): never both held.
+        let main = self.main_status();
+        AudioStatus {
+            cue: self.cue_status(),
+            ..main
+        }
+    }
+
+    fn main_status(&self) -> AudioStatus {
         let out = lock(&self.shared.output);
         let Some(stream) = &out.stream else {
             return AudioStatus {
@@ -305,7 +335,111 @@ impl AudioService {
             latency_ms: buffer_ms + device_us as f32 / 1000.0,
             device_xruns: stream.stats.device_xruns.load(Ordering::Relaxed),
             error: out.error.clone(),
+            cue: CueStatus::default(),
         }
+    }
+
+    fn cue_status(&self) -> CueStatus {
+        let underruns = self
+            .shared
+            .cue_slot
+            .as_ref()
+            .and_then(|slot| slot.try_with(|r| r.underruns()))
+            .unwrap_or(0);
+        let cue = lock(&self.shared.cue);
+        let mut status = CueStatus {
+            setting: cue.setting.clone(),
+            active: cue.active,
+            error: cue.error.clone(),
+            underruns,
+            ..CueStatus::default()
+        };
+        if let Some(stream) = &cue.stream {
+            let rate = stream.info.sample_rate.max(1) as f32;
+            let buffer = stream
+                .info
+                .buffer_frames
+                .unwrap_or_else(|| stream.stats.last_callback_frames.load(Ordering::Relaxed));
+            let device_us = stream.stats.device_latency_us.load(Ordering::Relaxed);
+            status.device_name = Some(stream.info.device_name.clone());
+            status.buffer_frames = stream.info.buffer_frames;
+            status.latency_ms =
+                (buffer as f32 + cue.target as f32) * 1000.0 / rate + device_us as f32 / 1000.0;
+        }
+        status
+    }
+
+    /// Route the headphones. A second device is opened first; only when that worked does the
+    /// engine start writing the ring. Failing leaves the master untouched.
+    pub fn set_cue(&self, setting: CueSetting) -> Result<AudioStatus, String> {
+        // Main output facts first (output lock), then the cue state (cue lock).
+        let (main_channels, main_buffer) = {
+            let out = lock(&self.shared.output);
+            let channels = out.stream.as_ref().map_or(0, |s| s.info.channels);
+            (channels, out.request.buffer_frames)
+        };
+        let mut cue = lock(&self.shared.cue);
+        cue.stream = None;
+        cue.setting = setting.clone();
+        cue.error = None;
+        let route = match &setting {
+            CueSetting::Off => CueRoute::Off,
+            CueSetting::Channels34 if main_channels >= 4 => CueRoute::Channels34,
+            CueSetting::Channels34 => {
+                cue.error = Some(
+                    "Das Ausgabegerät hat keine Ausgänge 3/4. Wähle ein Gerät mit vier Ausgängen \
+                     oder ein zweites Gerät für den Kopfhörer."
+                        .into(),
+                );
+                CueRoute::Off
+            }
+            CueSetting::Device {
+                device_id,
+                buffer_frames,
+            } => match self.open_cue_stream(device_id.clone(), *buffer_frames, main_buffer) {
+                Ok((stream, target)) => {
+                    cue.stream = Some(stream);
+                    cue.target = target;
+                    CueRoute::Ring
+                }
+                Err(e) => {
+                    cue.error = Some(e);
+                    CueRoute::Off
+                }
+            },
+        };
+        cue.active = route != CueRoute::Off;
+        let error = cue.error.clone();
+        drop(cue);
+        self.send(Command::Mixer(MixerCommand::CueRoute(route)));
+        let status = self.status();
+        (self.shared.notify)(UiEvent::AudioChanged(status.clone()));
+        match error {
+            Some(e) => Err(e),
+            None => Ok(status),
+        }
+    }
+
+    fn open_cue_stream(
+        &self,
+        device_id: Option<String>,
+        buffer_frames: u32,
+        main_buffer: u32,
+    ) -> Result<(OutputStream, usize), String> {
+        let slot = self
+            .shared
+            .cue_slot
+            .as_ref()
+            .ok_or_else(|| "Der Kopfhörer-Ausgang ist nicht verfügbar".to_string())?;
+        let target = cue_target(buffer_frames, main_buffer);
+        let request = OutputRequest {
+            device_id,
+            buffer_frames,
+            sample_rate: self.shared.sample_rate,
+        };
+        output::open_cue(slot, &request, target)
+            .map(|stream| (stream, target))
+            .map_err(|e| format!("Kopfhörer-Gerät: {e}"))
     }
 
     /// Open a new output. The new stream is built first; only when that worked does it replace
@@ -329,6 +463,11 @@ impl AudioService {
                     return Err(e);
                 }
             }
+        }
+        // Outputs 3/4 depend on the main device: check again after a switch.
+        let channels34 = lock(&self.shared.cue).setting == CueSetting::Channels34;
+        if channels34 {
+            let _ = self.set_cue(CueSetting::Channels34);
         }
         let status = self.status();
         (self.shared.notify)(UiEvent::AudioChanged(status.clone()));
@@ -439,6 +578,7 @@ impl AudioService {
                     next += FRAME_INTERVAL;
                     service.bridge_tick(&mut last_sent, &mut cues);
                     service.check_stream();
+                    service.check_cue_stream();
                     let now = Instant::now();
                     if now > next + FRAME_INTERVAL * 4 {
                         next = now; // fell behind (e.g. machine slept): don't burst
@@ -491,6 +631,54 @@ impl AudioService {
 
     /// Look at the *current* stream only: failures of streams already replaced cannot trigger a
     /// recovery that would tear down a healthy one.
+    /// The headphone device failed. The master is not touched: a vanished device stays off
+    /// (falling back to the default device would usually mean the speakers), anything else is
+    /// reopened once.
+    fn check_cue_stream(&self) {
+        let failure = {
+            let cue = lock(&self.shared.cue);
+            cue.stream.as_ref().and_then(|s| s.stats.failure())
+        };
+        let Some(failure) = failure else { return };
+        let (setting, name) = {
+            let mut cue = lock(&self.shared.cue);
+            let name = cue.stream.as_ref().map(|s| s.info.device_name.clone());
+            cue.stream = None;
+            cue.active = false;
+            (cue.setting.clone(), name)
+        };
+        self.send(Command::Mixer(MixerCommand::CueRoute(CueRoute::Off)));
+        let name = name.unwrap_or_else(|| "Das Kopfhörer-Gerät".into());
+        tracing::warn!(?failure, "headphone stream failed");
+        match cue_recovery(failure) {
+            CueRecovery::Stop => {
+                lock(&self.shared.cue).error =
+                    Some(format!("{name} wurde getrennt. Der Kopfhörer ist aus."));
+                (self.shared.notify)(UiEvent::AudioChanged(self.status()));
+            }
+            // In its own thread: the bridge must keep sending frames meanwhile.
+            CueRecovery::Reopen => {
+                let service = self.clone();
+                let spawned = thread::Builder::new()
+                    .name("rille-recover-cue".into())
+                    .spawn(move || {
+                        thread::sleep(RECOVERY_DELAY);
+                        let message = match service.set_cue(setting) {
+                            Ok(_) => {
+                                format!("Kopfhörer-Ausgabe von {name} unterbrochen, neu gestartet.")
+                            }
+                            Err(e) => e,
+                        };
+                        lock(&service.shared.cue).error = Some(message);
+                        (service.shared.notify)(UiEvent::AudioChanged(service.status()));
+                    });
+                if let Err(e) = spawned {
+                    tracing::error!(%e, "could not start headphone recovery");
+                }
+            }
+        }
+    }
+
     fn check_stream(&self) {
         let failure = {
             let out = lock(&self.shared.output);
@@ -531,6 +719,33 @@ impl AudioService {
         });
         (self.shared.notify)(UiEvent::AudioChanged(self.status()));
     }
+}
+
+/// What to do when the headphone device fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CueRecovery {
+    Reopen,
+    Stop,
+}
+
+pub fn cue_recovery(failure: StreamFailure) -> CueRecovery {
+    match failure {
+        StreamFailure::DeviceGone => CueRecovery::Stop,
+        StreamFailure::Other => CueRecovery::Reopen,
+    }
+}
+
+/// Frames kept in the headphone ring: two blocks of the slower side, at least 1024.
+pub fn cue_target(cue_buffer: u32, main_buffer: u32) -> usize {
+    (2 * cue_buffer.max(main_buffer) as usize).max(1_024)
+}
+
+struct CueState {
+    stream: Option<OutputStream>,
+    setting: CueSetting,
+    active: bool,
+    target: usize,
+    error: Option<String>,
 }
 
 /// Hot cues last seen on a deck, per engine track.
@@ -614,6 +829,19 @@ mod tests {
         let m = failure_message(StreamFailure::DeviceGone, Some("Interface"));
         assert!(m.contains("Interface") && m.contains("getrennt"));
         assert!(failure_message(StreamFailure::Other, None).contains("unterbrochen"));
+    }
+
+    #[test]
+    fn a_vanished_headphone_device_stays_off_other_failures_reopen() {
+        assert_eq!(cue_recovery(StreamFailure::DeviceGone), CueRecovery::Stop);
+        assert_eq!(cue_recovery(StreamFailure::Other), CueRecovery::Reopen);
+    }
+
+    #[test]
+    fn the_headphone_ring_keeps_two_blocks_of_the_slower_side() {
+        assert_eq!(cue_target(256, 128), 1_024);
+        assert_eq!(cue_target(1_024, 256), 2_048);
+        assert_eq!(cue_target(128, 2_048), 4_096);
     }
 
     #[test]

@@ -48,6 +48,7 @@ pub fn run() {
             commands::audio_devices,
             commands::audio_status,
             commands::audio_open,
+            commands::audio_set_cue,
             commands::deck_load_file,
             commands::deck_load_track,
             commands::library_tracks,

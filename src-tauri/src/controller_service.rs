@@ -273,6 +273,7 @@ pub fn lamp_state(snapshot: &Snapshot, modes: [PadMode; 2]) -> LampState {
     let deck = |id: DeckId| DeckLamps {
         pads: pad_lamps(snapshot, id, modes[id.index()]),
         sync: Lamp::from_bool(snapshot.decks[id.index()].sync_lock),
+        headphone_cue: Lamp::from_bool(snapshot.cue[id.index()]),
         ..deck_lamps(snapshot, id)
     };
     LampState {
@@ -283,7 +284,7 @@ pub fn lamp_state(snapshot: &Snapshot, modes: [PadMode; 2]) -> LampState {
             (Some(_), false) => Lamp::On,
             (Some(_), true) => Lamp::Blink,
         },
-        ..LampState::default()
+        master_cue: Lamp::from_bool(snapshot.master_cue),
     }
 }
 
@@ -335,6 +336,8 @@ pub fn commands_for(action: ControllerAction) -> Vec<Command> {
         A::Filter { deck: d, value } => vec![Command::Mixer(MixerCommand::Filter(d, value))],
         A::TransitionFx { pressed: true } => vec![Command::Mixer(MixerCommand::TransitionFx)],
         A::CycleTransitionFx => vec![Command::Mixer(MixerCommand::CycleTransitionFx)],
+        A::HeadphoneCue(d) => vec![Command::Mixer(MixerCommand::ToggleHeadphoneCue(d))],
+        A::MasterCue => vec![Command::Mixer(MixerCommand::ToggleMasterCue)],
         A::FaderStart {
             deck: d,
             play: true,
@@ -920,5 +923,31 @@ mod tests {
         );
         s.decks[0].sync_lock = true;
         assert_eq!(lamp_state(&s, [PadMode::HotCue; 2]).decks[0].sync, Lamp::On);
+    }
+
+    #[test]
+    fn headphone_buttons_toggle_and_light_up() {
+        assert_eq!(
+            commands_for(ControllerAction::HeadphoneCue(DeckId::B)),
+            [Command::Mixer(MixerCommand::ToggleHeadphoneCue(DeckId::B))]
+        );
+        assert_eq!(
+            commands_for(ControllerAction::MasterCue),
+            [Command::Mixer(MixerCommand::ToggleMasterCue)]
+        );
+        let s = Snapshot {
+            cue: [false, true],
+            master_cue: true,
+            ..Snapshot::default()
+        };
+        let lamps = lamp_state(&s, [PadMode::HotCue; 2]);
+        assert_eq!(
+            (
+                lamps.decks[0].headphone_cue,
+                lamps.decks[1].headphone_cue,
+                lamps.master_cue
+            ),
+            (Lamp::Off, Lamp::On, Lamp::On)
+        );
     }
 }

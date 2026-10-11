@@ -234,16 +234,53 @@ impl From<DeckAction> for DeckCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum MixerAction {
-    ChannelFader { deck: Deck, value: f32 },
-    Trim { deck: Deck, value: f32 },
-    Crossfader { value: f32 },
-    Curve { curve: Curve },
-    MasterGain { value: f32 },
-    Eq { deck: Deck, band: Band, value: f32 },
-    EqKill { deck: Deck, band: Band, kill: bool },
-    Filter { deck: Deck, value: f32 },
+    ChannelFader {
+        deck: Deck,
+        value: f32,
+    },
+    Trim {
+        deck: Deck,
+        value: f32,
+    },
+    Crossfader {
+        value: f32,
+    },
+    Curve {
+        curve: Curve,
+    },
+    MasterGain {
+        value: f32,
+    },
+    Eq {
+        deck: Deck,
+        band: Band,
+        value: f32,
+    },
+    EqKill {
+        deck: Deck,
+        band: Band,
+        kill: bool,
+    },
+    Filter {
+        deck: Deck,
+        value: f32,
+    },
     TransitionFx,
     CycleTransitionFx,
+    HeadphoneCue {
+        deck: Deck,
+        on: bool,
+    },
+    MasterCue {
+        on: bool,
+    },
+    /// 0 = cue only, 1 = master only.
+    CueMix {
+        value: f32,
+    },
+    CueLevel {
+        value: f32,
+    },
 }
 
 impl MixerAction {
@@ -292,6 +329,10 @@ impl From<MixerAction> for MixerCommand {
             MixerAction::Filter { deck, value } => MixerCommand::Filter(deck.into(), value),
             MixerAction::TransitionFx => MixerCommand::TransitionFx,
             MixerAction::CycleTransitionFx => MixerCommand::CycleTransitionFx,
+            MixerAction::HeadphoneCue { deck, on } => MixerCommand::HeadphoneCue(deck.into(), on),
+            MixerAction::MasterCue { on } => MixerCommand::MasterCue(on),
+            MixerAction::CueMix { value } => MixerCommand::CueMix(value),
+            MixerAction::CueLevel { value } => MixerCommand::CueLevel(value),
         }
     }
 }
@@ -348,6 +389,12 @@ pub struct StateFrame {
     pub eq_kill: [[bool; 3]; 2],
     pub filter: [f32; 2],
     pub transition: TransitionFrame,
+    /// Channels on the headphone bus.
+    pub cue: [bool; 2],
+    pub master_cue: bool,
+    pub cue_mix: f32,
+    pub cue_level: f32,
+    pub cue_peak: [f32; 2],
     pub xruns: u32,
     pub dropped_commands: u32,
 }
@@ -403,6 +450,11 @@ impl StateFrame {
                 releasing: s.transition.releasing,
             },
             xruns: s.xruns,
+            cue: s.cue,
+            master_cue: s.master_cue,
+            cue_mix: s.cue_mix,
+            cue_level: s.cue_level,
+            cue_peak: s.cue_peak,
             dropped_commands,
         }
     }
@@ -446,6 +498,39 @@ pub struct AudioStatus {
     /// Overloads CoreAudio reported for the current stream.
     pub device_xruns: u32,
     /// Last problem, in German, ready to show.
+    pub error: Option<String>,
+    /// Headphone output.
+    pub cue: CueStatus,
+}
+
+/// Where the headphones are connected.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum CueSetting {
+    #[default]
+    Off,
+    /// Outputs 3/4 of the main device.
+    Channels34,
+    /// A second device (`None` = system default).
+    #[serde(rename_all = "camelCase")]
+    Device {
+        device_id: Option<String>,
+        buffer_frames: u32,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CueStatus {
+    pub setting: CueSetting,
+    /// The headphone signal actually reaches a device.
+    pub active: bool,
+    pub device_name: Option<String>,
+    pub buffer_frames: Option<u32>,
+    /// Device buffer + ring + device latency, in milliseconds.
+    pub latency_ms: f32,
+    /// The second device ran dry (should stay 0).
+    pub underruns: u32,
     pub error: Option<String>,
 }
 

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use assert_no_alloc::{AllocDisabler, assert_no_alloc, reset_violation_count, violation_count};
 use rille_core::{
-    BeatGrid, Command, DeckCommand, DeckId, EqBand, MixerCommand, TempoRange, TrackAudio,
+    BeatGrid, Command, CueRoute, DeckCommand, DeckId, EqBand, MixerCommand, TempoRange, TrackAudio,
 };
 use rille_engine::engine_pair;
 
@@ -118,6 +118,21 @@ fn process_never_allocates() {
                     handle.send(Command::Deck(DeckId::A, DeckCommand::HotCueClear(2)));
                     handle.send(Command::Deck(DeckId::A, DeckCommand::LoopExit));
                 }
+            }
+            8 => {
+                // Headphones: cue on/off, master cue, blend, level, every route.
+                handle.send(Command::Mixer(MixerCommand::HeadphoneCue(
+                    DeckId::A,
+                    block % 100 < 50,
+                )));
+                handle.send(Command::Mixer(MixerCommand::MasterCue(block % 300 < 150)));
+                handle.send(Command::Mixer(MixerCommand::CueMix(
+                    (block % 5) as f32 / 4.0,
+                )));
+                handle.send(Command::Mixer(MixerCommand::CueLevel(0.7)));
+                let route =
+                    [CueRoute::Off, CueRoute::Channels34, CueRoute::Ring][(block % 3) as usize];
+                handle.send(Command::Mixer(MixerCommand::CueRoute(route)));
             }
             15 => {
                 // Start or cancel a transition effect; cycle the kind now and then.

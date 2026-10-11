@@ -210,9 +210,58 @@ fn find_device(host: &cpal::Host, id: Option<&str>) -> Result<cpal::Device, Outp
     }
 }
 
+/// What an output stream renders: the engine, or the headphone signal of a second device.
+pub trait Renderer: Clone + Send + 'static {
+    /// Fill `data` (interleaved, `channels` per frame). `false` if busy (silence is written).
+    fn render(&self, data: &mut [f32], channels: usize, xrun: bool) -> bool;
+}
+
+impl Renderer for EngineSlot {
+    fn render(&self, data: &mut [f32], channels: usize, xrun: bool) -> bool {
+        self.try_with(|engine| {
+            if xrun {
+                engine.note_xrun();
+            }
+            render_guarded(engine, data, channels);
+        })
+        .is_some()
+    }
+}
+
+/// The headphone reader of a second device.
+pub type CueSlot = crate::slot::Slot<crate::cue::DriftReader<rtrb::Consumer<f32>>>;
+
+impl Renderer for CueSlot {
+    fn render(&self, data: &mut [f32], channels: usize, _xrun: bool) -> bool {
+        self.try_with(|reader| {
+            #[cfg(debug_assertions)]
+            assert_no_alloc::assert_no_alloc(|| reader.render(data, channels));
+            #[cfg(not(debug_assertions))]
+            reader.render(data, channels);
+        })
+        .is_some()
+    }
+}
+
 /// Open an output stream that renders `slot`'s engine. Failures are reported through
 /// [`StreamStats::failure`], which the control side polls.
 pub fn open(slot: &EngineSlot, request: &OutputRequest) -> Result<OutputStream, OutputError> {
+    open_with(slot, request)
+}
+
+/// Open a stream for the headphone signal on a second device. `target` frames are kept in the
+/// ring (about two blocks of the slower side); the backlog from before is dropped.
+pub fn open_cue(
+    slot: &CueSlot,
+    request: &OutputRequest,
+    target: usize,
+) -> Result<OutputStream, OutputError> {
+    // Before the stream starts: nobody else holds the reader yet.
+    let _ = slot.try_with(|reader| reader.restart(target));
+    open_with(slot, request)
+}
+
+fn open_with<R: Renderer>(slot: &R, request: &OutputRequest) -> Result<OutputStream, OutputError> {
     let host = cpal::default_host();
     let device = find_device(&host, request.device_id.as_deref())?;
     let ranges: Vec<RateRange> = device
@@ -264,13 +313,7 @@ pub fn open(slot: &EngineSlot, request: &OutputRequest) -> Result<OutputStream, 
                     })
                     .unwrap_or(false);
                 last_callback = Some(ts.callback);
-                let rendered = slot.try_with(|engine| {
-                    if xrun {
-                        engine.note_xrun();
-                    }
-                    render_guarded(engine, data, channel_count);
-                });
-                if rendered.is_none() {
+                if !slot.render(data, channel_count, xrun) {
                     data.fill(0.0);
                 }
             },

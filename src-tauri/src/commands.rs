@@ -10,7 +10,7 @@ use tauri::{Manager, State};
 
 use crate::audio_service::{AudioService, TrackMeta};
 use crate::controller_service::{ControllerService, ControllerStatus, PadMode};
-use crate::dto::{AudioDevice, AudioStatus, Deck, DeckAction, MixerAction, StateFrame};
+use crate::dto::{AudioDevice, AudioStatus, CueSetting, Deck, DeckAction, MixerAction, StateFrame};
 use crate::library_service::{
     LibraryProgress, LibraryService, LibraryTrack, LibraryUnavailable, LoadInfo,
 };
@@ -51,6 +51,15 @@ pub fn audio_open(
         sample_rate: audio.sample_rate(),
     };
     audio.open(request).map_err(|e| e.to_string())
+}
+
+/// Where the headphones are connected (off, outputs 3/4, a second device).
+#[tauri::command(async)]
+pub fn audio_set_cue(
+    setting: CueSetting,
+    audio: State<'_, AudioService>,
+) -> Result<AudioStatus, String> {
+    audio.set_cue(setting)
 }
 
 /// Async: adding the file to the library reads its tags and touches the database, which must
