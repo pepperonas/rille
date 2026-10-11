@@ -57,4 +57,6 @@ Last während der Analyse, Speicher je Track-Minute.
   durchgehendem Strom gefüttert, statt an jeder Naht neu anzulaufen.
 - ~~Sync im Stillstand nur Tempo~~ – nachgezogen nach M9: ein im Stillstand gesynctes oder
   gelocktes Deck übernimmt die Phase beim Start (`align_on_start`, höchstens ½ Beat, nie aus
-  einem Loop heraus); Vorhören am Cue verbraucht den einmaligen Sync nicht.
+  einem Loop heraus). Vorhören spielt den Cue-Punkt selbst; Play bei gehaltenem Cue holt die
+  Phase mit Überblendung; ein neuer Track verwirft den gemerkten Sync; der Leader zweier
+  gelockter Decks bleibt stehen.

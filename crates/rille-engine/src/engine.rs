@@ -692,6 +692,8 @@ impl Engine {
         deck.grid = load.grid;
         deck.hot_cues = load.hot_cues;
         deck.loop_range = None;
+        // A pending one-shot sync was meant for the old track.
+        deck.sync_on_start = false;
         let old = deck.track.replace(load.track);
         self.release(old);
         let _ = self.io.events_tx.push(EngineEvent::TrackLoaded {
@@ -859,8 +861,12 @@ impl Engine {
             deck.loop_range = None;
         }
         let started = deck.transport.playing && !before.playing;
-        if started {
-            self.align_on_start(id, cmd);
+        // Previewing plays the cue point itself (that is what it is for); Play – also Play while
+        // the cue is held – is the moment the deck joins the mix and catches the phase.
+        let joined =
+            deck.transport.playing && !deck.transport.previewing && (started || before.previewing);
+        if joined {
+            self.align_on_start(id, started);
         }
         let deck = &mut self.decks[id.index()];
         deck.declick(before);
@@ -922,9 +928,16 @@ impl Engine {
         let error = self.phase_error(id, source, follow)?;
         let deck = &self.decks[id.index()];
         let own = deck.grid()?;
-        let to = deck.player.playhead() - error * beat::beat_frames(&own, self.sample_rate);
+        let beat_len = beat::beat_frames(&own, self.sample_rate);
         let last = deck.transport.frames.saturating_sub(1) as f64;
-        Some(to.clamp(0.0, last))
+        let mut to = deck.player.playhead() - error * beat_len;
+        // At the ends of the track the next beat over is the place on the phase.
+        if to < 0.0 {
+            to += beat_len;
+        } else if to > last {
+            to -= beat_len;
+        }
+        (0.0..=last).contains(&to).then_some(to)
     }
 
     /// SYNC pressed: match the other deck's tempo; if both play, also its phase (one short
@@ -951,15 +964,18 @@ impl Engine {
     /// deck that follows by sync lock, or that was synced while standing still, starts on the
     /// phase of the playing deck instead of drifting into it. Moves at most half a beat and
     /// never out of a running loop.
-    fn align_on_start(&mut self, id: DeckId, cmd: DeckCommand) {
+    fn align_on_start(&mut self, id: DeckId, silent_before: bool) {
         let deck = &self.decks[id.index()];
         let other = &self.decks[id.other().index()];
         let leads = other.sync_lock && other.locked_at > deck.locked_at;
-        let wanted = (deck.sync_lock && !leads) || deck.sync_on_start;
-        // Previewing on the cue does not use up a one-shot sync: Play still has to land.
-        if cmd != DeckCommand::CuePress {
-            self.decks[id.index()].sync_on_start = false;
-        }
+        // A locked deck goes by who leads (locking it while paused also armed the one-shot,
+        // but a deck that leads by now must stay where it is).
+        let wanted = if deck.sync_lock {
+            !leads
+        } else {
+            deck.sync_on_start
+        };
+        self.decks[id.index()].sync_on_start = false;
         if !wanted {
             return;
         }
@@ -972,8 +988,13 @@ impl Engine {
         {
             return;
         }
-        deck.transport.position = to as u64;
-        deck.player.jump_to(to);
+        if silent_before {
+            deck.transport.position = to as u64;
+            deck.player.jump_to(to);
+        } else {
+            // Play while the cue was held: the preview is audible, so crossfade the move.
+            deck.jump(to);
+        }
     }
 
     fn set_sync_lock(&mut self, id: DeckId, on: bool) {

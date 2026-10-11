@@ -110,7 +110,10 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - **Sync im Stillstand:** SYNC auf ein stehendes Deck setzt nur das Tempo und merkt sich
   `sync_on_start`; die Phase wird erst beim Start genommen (`align_on_start`, vor dem Declick,
   das Deck war still – kein Übergang nötig). Ein Lock-Folger startet genauso auf dem Beat statt
-  über `SYNC_CORRECTION_S` hineinzudriften. Der erste Cue-Druck auf einem gesuchten Deck setzt
+  über `SYNC_CORRECTION_S` hineinzudriften. Ausgelöst wird beim Eintritt in den Mix (Play, auch
+  Play bei gehaltenem Cue), nicht beim Vorhören; ein Lock auf ein stehendes Deck setzt über
+  `sync_once` auch `sync_on_start` – bei gelocktem Deck entscheidet darum nur die Leader-Regel.
+  Am Trackanfang/-ende ist der Nachbar-Beat das Ziel. Der erste Cue-Druck auf einem gesuchten Deck setzt
   nur den Cue-Punkt – Tests fürs Vorhören brauchen zwei Drücke.
 - Vom Nutzer korrigierte Grids (`grid_user`, Schema v4) überschreibt keine Analyse; erst eine
   geänderte Datei setzt das zurück.

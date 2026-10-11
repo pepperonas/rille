@@ -13,7 +13,9 @@ All notable changes to rille are documented here. The format follows
   the stretcher running, too.
 - Sync while paused: a deck synced (or locked) while it stands still keeps its position and
   catches the phase of the playing deck the moment it starts – at most half a beat away,
-  never out of a running loop. Previewing on the cue does not use up the one-shot sync.
+  never out of a running loop. Previewing on the cue plays the cue point itself; pressing Play
+  while the cue is held catches the phase with a short crossfade. A new track drops a pending
+  sync, and the leading deck of two locked decks is never moved.
 
 ### Added
 - M9 polish: global keyboard shortcuts for both decks and the mixer (physical keys, so QWERTZ

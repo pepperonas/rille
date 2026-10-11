@@ -467,6 +467,150 @@ fn a_paused_sync_does_not_move_the_deck_when_the_other_deck_stands_still() {
     );
 }
 
+fn at(rig: &mut Rig, deck: DeckId) -> u64 {
+    rig.snap().decks[deck.index()].position
+}
+
+/// B synced while paused on its cue at `cue` s, A playing from 10.3 s.
+fn paused_sync_rig(cue: f64) -> Rig {
+    let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.1));
+    rig.seek(DeckId::A, 10.3);
+    rig.send(DeckId::A, DeckCommand::Play);
+    rig.seek(DeckId::B, cue);
+    rig.run(0.2);
+    rig.send(DeckId::B, DeckCommand::Sync);
+    rig.run(0.41);
+    rig
+}
+
+#[test]
+fn loading_a_new_track_drops_a_pending_sync() {
+    let mut rig = paused_sync_rig(20.0);
+    let g = grid(124.0, 0.1);
+    let load = TrackLoad {
+        grid: Some(g),
+        ..TrackLoad::new(DeckId::B, beat_track(3, g, 120.0))
+    };
+    assert!(rig.handle.load_track(load).is_ok());
+    rig.run(0.01);
+    rig.seek(DeckId::B, 30.0);
+    rig.run(0.01);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.run(0.01);
+    let b = at(&mut rig, DeckId::B);
+    let from = 30 * u64::from(SR);
+    assert!((from..from + 2 * BLOCK as u64).contains(&b), "moved to {b}");
+}
+
+#[test]
+fn play_while_holding_the_cue_catches_the_phase_once() {
+    let mut rig = paused_sync_rig(20.0);
+    let cue = 20 * u64::from(SR);
+    rig.send(DeckId::B, DeckCommand::CuePress);
+    rig.send(DeckId::B, DeckCommand::CueRelease);
+    rig.send(DeckId::B, DeckCommand::CuePress);
+    rig.run(0.01);
+    // The preview plays the cue point itself, not a place near it.
+    let b = at(&mut rig, DeckId::B);
+    assert!(
+        (cue..cue + 2 * BLOCK as u64).contains(&b),
+        "preview from {b}"
+    );
+    rig.run(0.2);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.send(DeckId::B, DeckCommand::CueRelease);
+    rig.run(0.05);
+    let error = start_error(&mut rig);
+    assert!(error.abs() < 0.015, "joined {error} beats off");
+    // Used up: a later start stays where it is.
+    rig.send(DeckId::B, DeckCommand::Pause);
+    rig.run(0.1);
+    rig.seek(DeckId::B, 30.0);
+    rig.run(0.01);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.run(0.01);
+    let b = at(&mut rig, DeckId::B);
+    let from = 30 * u64::from(SR);
+    assert!((from..from + 2 * BLOCK as u64).contains(&b), "moved to {b}");
+}
+
+#[test]
+fn a_locked_preview_plays_the_cue_point_itself() {
+    let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.1));
+    rig.send(DeckId::A, DeckCommand::Play);
+    rig.seek(DeckId::B, 20.0);
+    rig.send(DeckId::B, DeckCommand::SyncLock(true));
+    rig.run(0.37);
+    rig.send(DeckId::B, DeckCommand::CuePress);
+    rig.send(DeckId::B, DeckCommand::CueRelease);
+    rig.send(DeckId::B, DeckCommand::CuePress);
+    rig.run(0.01);
+    let b = at(&mut rig, DeckId::B);
+    let cue = 20 * u64::from(SR);
+    assert!(
+        (cue..cue + 2 * BLOCK as u64).contains(&b),
+        "preview from {b}"
+    );
+}
+
+#[test]
+fn a_start_never_leaves_a_running_loop() {
+    let mut rig = paused_sync_rig(20.0);
+    rig.send(DeckId::B, DeckCommand::BeatLoop(0.0625));
+    rig.run(0.01);
+    let (start, end) = rig.snap().decks[1].loop_range.unwrap();
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.run(0.003);
+    let s = rig.snap().decks[1];
+    assert_eq!(s.loop_range, Some((start, end)), "the start left the loop");
+    assert!(
+        (start..end).contains(&s.position),
+        "{} outside the loop",
+        s.position
+    );
+}
+
+#[test]
+fn a_deck_on_the_first_frame_still_starts_on_the_phase() {
+    for a_at in [10.3, 10.45, 10.62, 10.81] {
+        let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.0));
+        rig.seek(DeckId::A, a_at);
+        rig.send(DeckId::A, DeckCommand::Play);
+        rig.seek(DeckId::B, 0.0);
+        rig.run(0.1);
+        rig.send(DeckId::B, DeckCommand::Sync);
+        rig.send(DeckId::B, DeckCommand::Play);
+        rig.run(0.05);
+        let error = start_error(&mut rig);
+        assert!(
+            error.abs() < 0.015,
+            "A at {a_at}: started {error} beats off"
+        );
+    }
+}
+
+#[test]
+fn the_leading_deck_is_not_moved_when_it_starts() {
+    let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.1));
+    rig.seek(DeckId::B, 20.0);
+    rig.send(DeckId::B, DeckCommand::Play);
+    rig.seek(DeckId::A, 10.3);
+    rig.send(DeckId::A, DeckCommand::SyncLock(true));
+    rig.run(0.05);
+    // B locks later and so follows A, even while A stands still.
+    rig.send(DeckId::B, DeckCommand::SyncLock(true));
+    rig.run(0.33);
+    rig.send(DeckId::A, DeckCommand::Play);
+    rig.run(0.01);
+    let a = at(&mut rig, DeckId::A);
+    let from = (10.3 * f64::from(SR)) as u64;
+    // A plays at B's tempo (×1.033) after locking: allow three blocks.
+    assert!(
+        (from..from + 3 * BLOCK as u64).contains(&a),
+        "leader moved to {a}"
+    );
+}
+
 #[test]
 fn unloading_a_deck_releases_its_sync_lock() {
     let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.0));
