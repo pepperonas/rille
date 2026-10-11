@@ -8,7 +8,10 @@ import {
   loaded,
   store,
   unloaded,
+  updateLibrary,
 } from './store';
+import { importPaths, loadSelected, moveSelected } from '../library/actions';
+import { mergeTracks } from '../library/model';
 
 /** Wire backend streams into the store. Returns a cleanup function. */
 export async function connectBackend(): Promise<() => void> {
@@ -20,13 +23,43 @@ export async function connectBackend(): Promise<() => void> {
     backend.on('deck-load-failed', (e) => store.update((s) => loadFailed(s, e))),
     backend.on('audio-changed', (audio) => store.update((s) => ({ ...s, audio }))),
     backend.on('controller-changed', (controller) => store.update((s) => ({ ...s, controller }))),
+    backend.on('library-tracks', (tracks) =>
+      store.update((s) =>
+        updateLibrary(s, (l) => ({ ...l, tracks: mergeTracks(l.tracks, tracks) })),
+      ),
+    ),
+    backend.on('library-progress', (progress) =>
+      store.update((s) => updateLibrary(s, (l) => ({ ...l, progress }))),
+    ),
+    backend.on('library-scroll', (rows) => moveSelected(rows)),
+    backend.on('library-load', (deck) => loadSelected(deck)),
     backend.onFileDrop(({ paths, x, y }) => {
-      const target = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-deck]');
-      const deck = target?.dataset.deck;
+      const hit = document.elementFromPoint(x, y);
+      // Onto the library: import (folders too). Onto a deck: play the first file.
+      if (hit?.closest('[data-library]')) {
+        importPaths(paths);
+        return;
+      }
+      const deck = hit?.closest<HTMLElement>('[data-deck]')?.dataset.deck;
       const path = paths[0];
       if ((deck === 'a' || deck === 'b') && path) void loadIntoDeck(deck, path);
     }),
   ]);
+  void Promise.all([backend.libraryTracks(), backend.libraryProgress()]).then(
+    ([tracks, progress]) =>
+      store.update((s) =>
+        updateLibrary(s, (l) => ({
+          ...l,
+          tracks: mergeTracks(l.tracks, tracks),
+          progress,
+          ready: true,
+        })),
+      ),
+    (e: unknown) => {
+      console.error('library unavailable', e);
+      store.update((s) => updateLibrary(s, (l) => ({ ...l, ready: true })));
+    },
+  );
   const [audio, controller] = await Promise.all([
     backend.audioStatus(),
     backend.controllerStatus().catch(() => null),
@@ -41,7 +74,11 @@ export async function connectBackend(): Promise<() => void> {
 }
 
 export async function loadIntoDeck(deck: Deck, path: string): Promise<void> {
-  const title = path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? path;
+  const title =
+    path
+      .split('/')
+      .pop()
+      ?.replace(/\.[^.]+$/, '') ?? path;
   store.update((s) => loadRequested(s, deck, title));
   try {
     const id = await backend.loadFile(deck, path);

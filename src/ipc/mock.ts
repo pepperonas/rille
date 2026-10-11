@@ -8,6 +8,8 @@ import type {
   Deck,
   DeckAction,
   DeckFrame,
+  LibraryProgress,
+  LibraryTrack,
   MixerAction,
   StateFrame,
 } from './types';
@@ -65,6 +67,34 @@ const DEMO_MIDI: Array<[boolean, string, string | null]> = [
   [true, '9F 00 7F', null],
 ];
 
+const ARTISTS = ['Ada Lux', 'Nachtfahrt', 'Kollektiv 9', 'Mira Vale', 'Øresund', 'Dub Atlas'];
+const WORDS = ['Neon', 'Avenue', 'Deep', 'Hours', 'Static', 'Bloom', 'Tide', 'Signal', 'Velvet'];
+
+/** Deterministic fake tracks; `analyzed` false leaves them pending. */
+export function fakeTracks(from: number, count: number, analyzed: boolean): LibraryTrack[] {
+  return Array.from({ length: count }, (_, i) => {
+    const n = from + i;
+    const title = `${WORDS[n % WORDS.length]} ${WORDS[(n * 5 + 3) % WORDS.length]}${n > 8 ? ` ${n}` : ''}`;
+    const artist = ARTISTS[(n * 7) % ARTISTS.length] ?? 'Unbekannt';
+    return {
+      id: n,
+      path: `/Musik/${artist}/${title}.mp3`,
+      title,
+      artist,
+      album: null,
+      duration: 180 + ((n * 37) % 240),
+      bpm: analyzed ? fakeBpm(n) : null,
+      analysis: analyzed ? 'done' : 'pending',
+      error: null,
+    };
+  });
+}
+
+function fakeBpm(n: number): number | null {
+  if (n % 11 === 7) return null; // ambient: no clear tempo
+  return 118 + ((n * 13) % 300) / 10;
+}
+
 export function createMockBackend(): Backend {
   const decks: [MockDeck, MockDeck] = [emptyDeck(), emptyDeck()];
   const state = {
@@ -88,6 +118,8 @@ export function createMockBackend(): Backend {
     transitionStart: 0,
   };
   let nextId = 1;
+  let library: LibraryTrack[] = [];
+  const progress: LibraryProgress = { importing: false, queued: 0, analyzed: 0 };
   // `?demo`: both decks loaded and playing, a controller "connected" — for screenshots.
   const demo = typeof location !== 'undefined' && new URLSearchParams(location.search).has('demo');
   const controller = {
@@ -112,6 +144,37 @@ export function createMockBackend(): Backend {
 
   const emit = <E extends keyof BackendEvents>(event: E, payload: BackendEvents[E]) =>
     listeners.get(event)?.forEach((l) => l(payload));
+
+  if (demo) library = fakeTracks(1, 64, true);
+
+  /** Import as the Rust side does: rows first (pending), then one analysis result at a time. */
+  const simulateImport = (count: number) => {
+    const from = library.length + 1;
+    const added = fakeTracks(from, count, false);
+    library = [...library, ...added];
+    Object.assign(progress, { importing: true });
+    emit('library-progress', { ...progress });
+    setTimeout(() => {
+      emit('library-tracks', added);
+      Object.assign(progress, { importing: false, queued: progress.queued + count });
+      emit('library-progress', { ...progress });
+      added.forEach((t, i) =>
+        setTimeout(
+          () => {
+            const done: LibraryTrack = { ...t, analysis: 'done', bpm: fakeBpm(t.id) };
+            library = library.map((x) => (x.id === t.id ? done : x));
+            progress.analyzed += 1;
+            emit('library-tracks', [done]);
+            if (progress.analyzed === progress.queued) {
+              emit('library-progress', { ...progress });
+              Object.assign(progress, { queued: 0, analyzed: 0 });
+            } else emit('library-progress', { ...progress });
+          },
+          120 * (i + 1),
+        ),
+      );
+    }, 80);
+  };
 
   const idx = (d: Deck) => (d === 'a' ? 0 : 1);
 
@@ -189,7 +252,15 @@ export function createMockBackend(): Backend {
 
   function deckAction(d: MockDeck, action: DeckAction) {
     // Transport needs a track; tempo, range and keylock can be set ahead (as in the engine).
-    const settings = ['unload', 'tempo', 'tempoRange', 'cycleTempoRange', 'keylock', 'bend', 'reverse'];
+    const settings = [
+      'unload',
+      'tempo',
+      'tempoRange',
+      'cycleTempoRange',
+      'keylock',
+      'bend',
+      'reverse',
+    ];
     if (d.frames === 0 && !settings.includes(action.type)) return;
     switch (action.type) {
       case 'play':
@@ -297,7 +368,12 @@ export function createMockBackend(): Backend {
         }
         const loudest = ([0, 1] as const)
           .filter((i) => decks[i].playing)
-          .map((i) => ({ i, level: (state.channelFader[i] ?? 0) ** 2 * (i === 0 ? 1 - state.crossfader : state.crossfader) }))
+          .map((i) => ({
+            i,
+            level:
+              (state.channelFader[i] ?? 0) ** 2 *
+              (i === 0 ? 1 - state.crossfader : state.crossfader),
+          }))
           .sort((a, b) => b.level - a.level)[0];
         if (loudest) {
           state.transition = { ...t, deck: loudest.i === 0 ? 'a' : 'b', releasing: false };
@@ -317,15 +393,53 @@ export function createMockBackend(): Backend {
   }
 
   /** Demo positions for the screenshot tracks: (seconds, channel fader). */
-  const DEMO_TRACKS: Record<string, [number, number]> = {
-    'Deep Hours (Extended Mix)': [74.3, 0.86],
-    'Neon Avenue (Club Edit)': [191.6, 0.92],
+  /** Demo presets: position (s), channel fader, artist, tempo. */
+  const DEMO_TRACKS: Record<string, [number, number, string, number]> = {
+    'Deep Hours (Extended Mix)': [74.3, 0.86, 'Mira Vale', 122.0],
+    'Neon Avenue (Club Edit)': [191.6, 0.92, 'Nachtfahrt', 124.0],
   };
 
   function startDemo() {
     state.crossfader = 0.42;
     emit('controller-changed', { ...controller });
   }
+
+  const load = (
+    deck: Deck,
+    title: string,
+    artist: string | null,
+    bpm: number | null,
+    durationSecs: number,
+  ): number => {
+    const id = nextId++;
+    const d = decks[idx(deck)];
+    // Tempo, range and keylock stay with the deck across loads, as in the engine.
+    const { tempo, tempoRange, keylock } = d;
+    Object.assign(d, emptyDeck(), {
+      trackId: id,
+      frames: Math.round(durationSecs * RATE),
+      tempo,
+      tempoRange,
+      keylock,
+    });
+    const preset = demo ? DEMO_TRACKS[title] : undefined;
+    if (preset) {
+      d.position = Math.round(preset[0] * RATE);
+      d.cue = Math.round(16.2 * RATE);
+      d.playing = true;
+      state.channelFader[idx(deck)] = preset[1];
+      // Deck 1 runs slightly faster with keylock, so the screenshots show the tempo section.
+      if (deck === 'a') {
+        d.tempo = 0.24;
+        d.keylock = true;
+      }
+    }
+    setTimeout(
+      () => emit('deck-loaded', { deck, trackId: id, title, artist, bpm, durationSecs }),
+      50,
+    );
+    return id;
+  };
 
   return {
     kind: 'mock',
@@ -365,36 +479,31 @@ export function createMockBackend(): Backend {
       emit('audio-changed', { ...status });
       return { ...status };
     },
+    async libraryTracks() {
+      return [...library];
+    },
+    async libraryProgress() {
+      return { ...progress };
+    },
+    async libraryImport(paths) {
+      simulateImport(Math.max(1, paths.length) * 4);
+    },
+    async libraryChooseFolder() {
+      simulateImport(12);
+    },
+    async loadTrack(deck, id) {
+      const t = library.find((x) => x.id === id);
+      if (!t) throw new Error('Dieser Track ist nicht mehr in der Library');
+      return load(deck, t.title, t.artist, t.bpm, t.duration ?? TRACK_SECONDS);
+    },
     async loadFile(deck, path) {
-      const id = nextId++;
-      const d = decks[idx(deck)];
-      // Tempo, range and keylock stay with the deck across loads, as in the engine.
-      const { tempo, tempoRange, keylock } = d;
-      Object.assign(d, emptyDeck(), {
-        trackId: id,
-        frames: TRACK_SECONDS * RATE,
-        tempo,
-        tempoRange,
-        keylock,
-      });
-      const title = path.split('/').pop()?.replace(/\.[^.]+$/, '') ?? 'Unbenannt';
+      const title =
+        path
+          .split('/')
+          .pop()
+          ?.replace(/\.[^.]+$/, '') ?? 'Unbenannt';
       const preset = demo ? DEMO_TRACKS[title] : undefined;
-      if (preset) {
-        d.position = Math.round(preset[0] * RATE);
-        d.cue = Math.round(16.2 * RATE);
-        d.playing = true;
-        state.channelFader[idx(deck)] = preset[1];
-        // Deck 1 runs slightly faster with keylock, so the screenshots show the tempo section.
-        if (deck === 'a') {
-          d.tempo = 0.24;
-          d.keylock = true;
-        }
-      }
-      setTimeout(
-        () => emit('deck-loaded', { deck, trackId: id, title, durationSecs: TRACK_SECONDS }),
-        50,
-      );
-      return id;
+      return load(deck, title, preset?.[2] ?? null, preset?.[3] ?? null, TRACK_SECONDS);
     },
     async controllerStatus() {
       return { ...controller };

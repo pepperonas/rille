@@ -100,6 +100,17 @@ impl Tags {
     }
 }
 
+/// What the file name alone says, for files whose header cannot be read.
+pub fn info_from_file_name(path: &Path) -> TrackInfo {
+    let (artist, title) = from_file_name(path);
+    TrackInfo {
+        title,
+        artist,
+        album: None,
+        duration_secs: None,
+    }
+}
+
 /// `"Artist - Title.mp3"` → (Some("Artist"), "Title"); anything else → (None, file stem).
 fn from_file_name(path: &Path) -> (Option<String>, String) {
     let stem = path

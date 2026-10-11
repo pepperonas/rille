@@ -76,7 +76,35 @@ export interface DeckLoaded {
   deck: Deck;
   trackId: number;
   title: string;
+  artist: string | null;
+  /** From the library analysis; null if unknown. */
+  bpm: number | null;
   durationSecs: number;
+}
+
+export type AnalysisState = 'pending' | 'done' | 'failed';
+
+/** A track in the library (src-tauri/src/library_service.rs). */
+export interface LibraryTrack {
+  id: number;
+  path: string;
+  title: string;
+  artist: string | null;
+  album: string | null;
+  /** Seconds; null until known. */
+  duration: number | null;
+  /** null: not analysed yet, or no clear tempo. */
+  bpm: number | null;
+  analysis: AnalysisState;
+  error: string | null;
+}
+
+export interface LibraryProgress {
+  importing: boolean;
+  /** Tracks queued for analysis since the queue was last idle. */
+  queued: number;
+  /** Of those, finished. */
+  analyzed: number;
 }
 
 export interface DeckLoadFailed {
@@ -138,6 +166,13 @@ export interface BackendEvents {
   'audio-changed': AudioStatus;
   'controller-changed': ControllerStatus;
   'midi-monitor': MonitorLine[];
+  /** Added or changed tracks, merged by id. */
+  'library-tracks': LibraryTrack[];
+  'library-progress': LibraryProgress;
+  /** Controller: move the selection by this many rows. */
+  'library-scroll': number;
+  /** Controller: load the selected track onto this deck. */
+  'library-load': Deck;
 }
 
 export type Unsubscribe = () => void;
@@ -161,6 +196,14 @@ export interface Backend {
   audioStatus(): Promise<AudioStatus>;
   audioOpen(deviceId: string | null, bufferFrames: number): Promise<AudioStatus>;
   loadFile(deck: Deck, path: string): Promise<number>;
+  /** Load a library track; resolves with the request id like `loadFile`. */
+  loadTrack(deck: Deck, id: number): Promise<number>;
+  libraryTracks(): Promise<LibraryTrack[]>;
+  libraryProgress(): Promise<LibraryProgress>;
+  /** Import dropped folders or files in the background. */
+  libraryImport(paths: string[]): Promise<void>;
+  /** Native folder picker, then import. */
+  libraryChooseFolder(): Promise<void>;
   controllerStatus(): Promise<ControllerStatus>;
   setVinylMode(on: boolean): Promise<void>;
   setMidiMonitor(on: boolean): Promise<void>;

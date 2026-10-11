@@ -33,6 +33,8 @@ export function dampingRatio(token: SpringToken, mass = 1): number {
 export const sizes = {
   playButton: 72,
   transportButton: 56,
+  /** Library list row; the virtualised list positions rows by this. */
+  libraryRow: 36,
 } as const;
 
 /** Corner radii in px. Mirrors the --shape-* tokens. */

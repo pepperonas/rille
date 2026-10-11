@@ -47,7 +47,7 @@
 > **Stand: frühe Entwicklung (v0.1.0).** Zwei Decks spielen Dateien aus dem Finder, mit Cue nach
 > Pioneer-Art, Tempo mit Keylock, Pitch-Bend, Scratch und Reverse, Isolator-EQ, Filter,
 > Transition-FX, Kanalfadern, Crossfader und Pegeln — bedienbar mit Maus, Tastatur und DDJ-200.
-> Library, Waveforms und Beat-Funktionen folgen Meilenstein für
+> Dazu eine Library mit BPM-/Beatgrid-Analyse. Waveforms und Beat-Funktionen folgen Meilenstein für
 > Meilenstein (siehe [Roadmap](#%EF%B8%8F-roadmap)). Ein fertiges Release gibt es noch nicht.
 
 ---
@@ -91,8 +91,27 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
 
 **Schon da**
 
-- **Zwei Decks** — Audiodatei aus dem Finder auf ein Deck ziehen; Titel, Zeit und Restzeit
-  (tabellarische Ziffern, aus zwei Metern lesbar), Fortschrittslinie, Auswerfen.
+- **Zwei Decks** — Audiodatei aus dem Finder auf ein Deck ziehen oder aus der Library laden;
+  Titel, Artist, BPM, Zeit und Restzeit (tabellarische Ziffern, aus zwei Metern lesbar),
+  Fortschrittslinie, Auswerfen.
+- **Sofort spielbereit** — ein Track ist etwa 4 ms nach Ladebeginn spielbar und füllt sich
+  während er läuft (progressives Dekodieren in einen lockfreien Puffer); gemessen an einer
+  4:18-MP3, deren vollständiges Dekodieren und Resampeln 450 ms dauert.
+- **Library** — Ordner importieren (Knopf oder aus dem Finder auf die Library ziehen); Titel,
+  Artist und Album aus den Tags oder aus einem Dateinamen der Form `Artist - Titel`. Die
+  virtualisierte Liste bleibt auch mit Zehntausenden Tracks schnell; Suche über Titel, Artist,
+  Album und BPM (Akzente egal), Sortierung nach Titel, Artist, BPM oder Dauer. Laden per
+  Doppelklick, Enter (erstes leeres Deck), `1` / `2`, durch Ziehen einer Zeile aufs Deck oder
+  vom DDJ-200 (Shift + Jog-Rand blättert, Shift + Kopfhörer-Cue lädt). Gespeichert in SQLite;
+  geänderte Dateien werden neu analysiert.
+- **BPM- und Beatgrid-Analyse** — im Hintergrund auf allen Kernen bis auf zwei, mit niedriger
+  Systempriorität: Onsets per spektralem Fluss, Tempo per Autokorrelation mit Oktav-Prüfung,
+  Verfeinerung auf 0,005 BPM per Phasenfaltung, Phase des Beats aus dem Kick-Band. Ein Track
+  ohne klaren, gleichmäßigen Beat bekommt *kein* Tempo statt eines geratenen. Auf 21 echten
+  Tracks (House, Techno, Disco, Pop, ein Live-Schlagzeuger) bekam jeder ein Tempo; ein
+  8-Minuten-Track braucht ~1,5 s.
+- **Waveform-Daten** — Spitzenwerte in drei Bändern (tief / mittel / hoch) in vier Zoomstufen
+  entstehen im selben Durchlauf und liegen für die Waveforms aus M6 im Cache.
 - **Cue nach Pioneer-Art** — pausiert: Cue-Punkt setzen; auf dem Cue-Punkt halten = vorhören,
   loslassen = zurück; Play beim Halten = weiterspielen; spielend: zurück zum Cue und Pause.
   Shift + Cue springt an den Anfang.
@@ -128,7 +147,7 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
 - **„Über rille“** — Version, Spenden- und Bewerten-Button, Link zum Quellcode; externe Links
   dürfen nur die freigegebenen Adressen öffnen.
 
-**Als Nächstes** — Library mit BPM- und Beatgrid-Analyse (M5), Waveforms (M6), Sync, Hot Cues, Loops und Pads
+**Als Nächstes** — Waveforms (M6), Sync, Hot Cues, Loops und Pads
 (M7), Vorhören im Kopfhörer (M8). Siehe [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
@@ -144,12 +163,12 @@ Vinyl-Modus und MIDI-Monitor in den Einstellungen.
 | Kanalfader | Lautstärke | Fader Start: hoch = Play, zurück auf null = zum Cue | ✅ |
 | Crossfader | Überblenden (Kurve in der App) | — | ✅ |
 | Jog berühren + Teller | Scratch (Vinyl-Modus); ohne Vinyl-Modus Pitch-Bend | Schneller Suchlauf | ✅ |
-| Jog-Rand | Pitch-Bend | Library-Navigation | ✅ / M5 |
+| Jog-Rand | Pitch-Bend | Library-Navigation | ✅ |
 | Tempo-Fader | Tempo (oben langsamer, wie aufgedruckt), Soft-Takeover | — | ✅ |
 | Beat Sync | kurz: Sync · lang: Sync-Lock | Tempo-Bereich wechseln (±6/10/16 %/Wide) | M7 / ✅ |
 | EQ Hi / Mid / Low | 3-Band-Isolator | — | ✅ |
 | CFX | Bipolares Filter (links Lowpass, rechts Highpass) | — | ✅ |
-| Kopfhörer-Cue | Kanal vorhören | Markierten Track laden | M8 / M5 |
+| Kopfhörer-Cue | Kanal vorhören | Markierten Track laden | M8 / ✅ |
 | Master Cue | Master im Kopfhörer | — | M8 |
 | Transition FX | Echo-Out / Filter-Out aufs lautere spielende Deck; nochmal = abbrechen | Effekt wechseln | ✅ |
 | Pads 1–8 | Hot Cue / Beat Loop / Beat Jump | Löschen / Loop verlassen | M7 |
@@ -185,7 +204,9 @@ Alles funktioniert auch ohne Controller:
 
 | Aktion | So geht's |
 |---|---|
-| Track laden | Audiodatei aus dem Finder auf ein Deck ziehen |
+| Track laden | Audiodatei aus dem Finder auf ein Deck ziehen, oder eine Library-Zeile (ziehen, Doppelklick) |
+| Musik importieren | „Ordner importieren“, oder einen Ordner auf die Library ziehen |
+| Library | Suchfeld (↓ / Enter springt in die Liste); in der Liste ↑ ↓, Bild ↑ ↓, Pos1 / Ende; Enter = erstes leeres Deck, `1` / `2` = Deck 1 / 2; Spaltenkopf klicken sortiert |
 | Play/Pause, Cue | Klicken, oder Knopf fokussieren und Leertaste / Enter (Cue: halten = vorhören) |
 | Zum Anfang | Shift + Klick auf Cue |
 | Tempo | Tempo-Fader rechts im Deck: ziehen (oben = langsamer), Pfeiltasten, Doppelklick = 0 % |
@@ -309,7 +330,9 @@ pnpm tauri dev        # App bauen und starten
 | CPU im Leerlauf | minimal | 0,2 % (Debug-Build, nichts spielt) |
 | Zwei Decks rendern, Keylock aus / an | — | im Mittel 0,4 % / 1,9 % eines Kerns (Release, `examples/bench_keylock.rs`) |
 | Langsamster Block mit Keylock (Spektralarbeit kommt stoßweise) | innerhalb der Blockzeit | 566 µs: 11 % eines 256-Frame-Blocks, 41 % eines 64-Frame-Blocks |
-| 3:43-MP3 dekodieren + resampeln | Track laden < 300 ms (analysierte Tracks) | ~360 ms (Release) — ein PCM-Cache kommt mit der Library (M5) |
+| Track laden | < 300 ms | nach ~4 ms spielbar (progressives Dekodieren; vollständig bei einer 4:18-MP3: 450 ms) |
+| Analyse eines 8-Minuten-Tracks | im Hintergrund | ~1,5 s auf einem Worker (Release), Speicher bleibt flach (gestreamt) |
+| Abspielen während die Library analysiert | kein Block über Budget | zwei Decks mit Keylock in Echtzeit-Priorität, 8 Analyse-Worker: 0 von 5.625 Blöcken über Budget, langsamster 25–29 % von 5,3 ms (`examples/load_test.rs`, 30 s, bei starker Fremdlast) |
 | Controller → hörbar | < 10 ms (ohne Gerätelatenz) | ein Audioblock (≤ 5,3 ms) + MIDI |
 
 ## 🧪 Tests
@@ -319,12 +342,12 @@ CI committet neue Zahlen, sobald sie sich ändern.
 
 | Suite | Wo | Schwerpunkte |
 |---|---|---|
-| Rust Unit + Integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | Cue-Zustandsmaschine, Kennlinien, Glättung, Declick, Pegel, gemessene EQ-/Filter-Frequenzgänge, Keylock-Tonhöhe und -Laufzeit bei ±16 % (Nulldurchgänge), Keylock-Ausrichtung am Abspielkopf, keine Lücke nach Sprüngen bei jedem Tempo, Reverse, Scratch, Bend, Suchlauf, Decoder-Randfälle, jede PDF-Zeile des DDJ-200, 14 Bit/Jog/Shift, Soft-Takeover inkl. Reconnect und schneller Fader-Züge |
+| Rust Unit + Integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | Cue-Zustandsmaschine, Kennlinien, Glättung, Declick, Pegel, gemessene EQ-/Filter-Frequenzgänge, Keylock-Tonhöhe und -Laufzeit bei ±16 % (Nulldurchgänge), Keylock-Ausrichtung am Abspielkopf, keine Lücke nach Sprüngen bei jedem Tempo, Reverse, Scratch, Bend, Suchlauf, Decoder-Randfälle, jede PDF-Zeile des DDJ-200, 14 Bit/Jog/Shift, Soft-Takeover inkl. Reconnect und schneller Fader-Züge, progressives Laden (der Leser sieht nie Unveröffentlichtes), BPM auf synthetischen Mustern (Kicks bei 90–174 BPM, Swing, offene Hi-Hats, Breakdown, Tempo-Drift eines Live-Schlagzeugers) und Ablehnungen (Stille, Rauschen, Zufallsschläge), Peaks-Format, Datenbank-Migrationen, Import → Analyse → Peaks durchgehend |
 | Allokations-Wächter | `crates/rille-engine/tests/no_alloc.rs` | 2.000 Blöcke unter `assert_no_alloc` inkl. Tempo, Keylock, Scratch und Reverse, plus Gegenprobe mit absichtlicher Allokation |
 | C++-Allokations-Wächter | `crates/rille-engine/tests/stretch_alloc.rs` | Signalsmith Stretch `process`/`reset`/`seek` bei wechselnden Raten über den `malloc_logger`-Haken, mit Gegenprobe |
 | CoreMIDI-Rundweg | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtueller DDJ-200 → Port → Decoder → Aktion, und LEDs zurück |
-| Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | Store und Lade-Rennen, Positions-Fortschreibung, Token-Gleichstand und Kontrast, „keine Rohwerte“-Wächter |
-| E2E (Playwright) | `e2e/` | Laden, Play, Cue, Auswerfen, Tastaturbedienung, Fader, Tempo-Bereich und -Anzeige, Keylock, Reverse und Bend beim Halten, Layout bei 1024×680, Einstellungen, Controller-UI — gegen das Mock-Backend |
+| Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | Library-Suche/-Sortierung/-Auswahl, Store und Lade-Rennen, Positions-Fortschreibung, Token-Gleichstand und Kontrast, „keine Rohwerte“-Wächter |
+| E2E (Playwright) | `e2e/` | Library-Import mit Fortschritt, virtualisierte Liste, Suche, Sortierung, Laden per Tastatur, Ziehen aufs Deck, Laden, Play, Cue, Auswerfen, Tastaturbedienung, Fader, Tempo-Bereich und -Anzeige, Keylock, Reverse und Bend beim Halten, Layout bei 1024×680, Einstellungen, Controller-UI — gegen das Mock-Backend |
 
 Praxis: Clippy mit `-D warnings`, `unwrap`/`expect`/`panic` außerhalb von Tests verboten, neue
 Wächter werden per Mutationsprobe geprüft (einmal gegen absichtlich kaputten Code laufen lassen,
@@ -343,7 +366,7 @@ rille/
 │   ├── rille-core/      gemeinsame Typen: DeckId, Command, Snapshot, TrackAudio
 │   ├── rille-engine/    Echtzeit-Engine, DSP, cpal-Ausgabe, EngineSlot
 │   ├── rille-midi/      DDJ-200-Tabelle, Decoder, Belegung, Soft-Takeover, LEDs, Ports, virtueller DDJ
-│   └── rille-library/   Dekodieren und Resampling (Library + Analyse folgen in M5)
+│   └── rille-library/   Dekodieren, Resampling, Scan, Tags, BPM/Beatgrid, Peaks, SQLite
 ├── src-tauri/           App-Shell: AudioService, ControllerService, Commands, Bridge
 ├── src/                 React-Oberfläche: deck/, mixer/, settings/, dev/, design/, ipc/, state/
 ├── e2e/                 Playwright-Tests
@@ -362,7 +385,7 @@ rille/
 | M2 | Pioneer DDJ-200: Mapping, LEDs, Takeover, Hotplug, Monitor | ✅ (Hardware-Abnahme offen) |
 | M3 | Isolator-EQ mit Kill, bipolares Filter, Transition-FX (Echo-Out, Filter-Out) | ✅ |
 | M4 | Tempo-Bereiche, Keylock (Signalsmith Stretch), Pitch-Bend, Scratch, Reverse | ✅ (Jog-Kalibrierung bei der Hardware-Abnahme) |
-| M5 | Library: Import, SQLite, BPM-/Beatgrid-Analyse, Suche, Drag & Drop | ⏳ |
+| M5 | Library: Import, SQLite, BPM-/Beatgrid-Analyse, Suche, Drag & Drop | ✅ |
 | M6 | Waveforms (Übersicht + scrollende Detailansicht, Frequenzfarben), Deck-Oberfläche | ⏳ |
 | M7 | Sync & Sync-Lock, Hot Cues, Beat Loops, Beat Jump, Pad-Modi | ⏳ |
 | M8 | Vorhören über ein zweites Gerät oder ein 4-Kanal-Interface | ⏳ |

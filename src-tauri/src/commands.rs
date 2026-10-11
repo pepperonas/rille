@@ -8,9 +8,10 @@ use rille_engine::output::{self, OutputRequest};
 use tauri::ipc::Channel;
 use tauri::{Manager, State};
 
-use crate::audio_service::AudioService;
+use crate::audio_service::{AudioService, TrackMeta};
 use crate::controller_service::{ControllerService, ControllerStatus};
 use crate::dto::{AudioDevice, AudioStatus, Deck, DeckAction, MixerAction, StateFrame};
+use crate::library_service::{LibraryProgress, LibraryService, LibraryTrack, LoadInfo};
 
 /// Where state frames go. Replaced on every subscription (e.g. after a webview reload).
 #[derive(Default)]
@@ -55,8 +56,76 @@ pub fn deck_load_file(
     deck: Deck,
     path: PathBuf,
     audio: State<'_, AudioService>,
+    app: tauri::AppHandle,
 ) -> Result<u64, String> {
-    audio.load_file(deck.into(), path)
+    // A file the library knows brings its tags and tempo along.
+    let meta = app
+        .try_state::<LibraryService>()
+        .and_then(|lib| lib.load_info_for_path(&path))
+        .map(meta_of)
+        .unwrap_or_else(|| TrackMeta::from_path(&path));
+    audio.load_file(deck.into(), path, meta)
+}
+
+fn meta_of(info: LoadInfo) -> TrackMeta {
+    TrackMeta {
+        title: info.title,
+        artist: info.artist,
+        bpm: info.bpm,
+    }
+}
+
+fn library(app: &tauri::AppHandle) -> Result<State<'_, LibraryService>, String> {
+    app.try_state::<LibraryService>()
+        .ok_or_else(|| "Die Library ist nicht verfügbar".to_string())
+}
+
+#[tauri::command]
+pub fn deck_load_track(
+    deck: Deck,
+    id: i64,
+    audio: State<'_, AudioService>,
+    app: tauri::AppHandle,
+) -> Result<u64, String> {
+    let info = library(&app)?
+        .load_info(id)
+        .ok_or_else(|| "Dieser Track ist nicht mehr in der Library".to_string())?;
+    let path = info.path.clone();
+    audio.load_file(deck.into(), path, meta_of(info))
+}
+
+#[tauri::command]
+pub fn library_tracks(app: tauri::AppHandle) -> Result<Vec<LibraryTrack>, String> {
+    library(&app)?.tracks().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn library_progress(app: tauri::AppHandle) -> Result<LibraryProgress, String> {
+    Ok(library(&app)?.progress())
+}
+
+/// Import dropped folders or files.
+#[tauri::command]
+pub fn library_import(paths: Vec<PathBuf>, app: tauri::AppHandle) -> Result<(), String> {
+    library(&app)?.import(paths);
+    Ok(())
+}
+
+/// Ask for a folder (native dialog) and import it. The dialog lives on the Rust side, so the
+/// webview needs no dialog permission.
+#[tauri::command]
+pub fn library_choose_folder(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_dialog::DialogExt;
+    let service = library(&app)?.inner().clone();
+    app.dialog()
+        .file()
+        .set_title("Musikordner importieren")
+        .pick_folder(move |folder| {
+            if let Some(path) = folder.and_then(|f| f.into_path().ok()) {
+                service.import(vec![path]);
+            }
+        });
+    Ok(())
 }
 
 #[tauri::command]

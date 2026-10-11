@@ -99,7 +99,7 @@
 > **Status: early development (v0.1.0).** Two decks play files dropped from the Finder, with
 > Pioneer-style cue, tempo with keylock, pitch bend, scratch and reverse, isolator EQ, filter,
 > transition FX, channel faders, crossfader and meters — controllable with mouse, keyboard and
-> the DDJ-200. The library, waveforms and beat features follow milestone by milestone (see [Roadmap](#%EF%B8%8F-roadmap)). There is no packaged release yet.
+> the DDJ-200, plus a library with BPM/beatgrid analysis. Waveforms and beat features follow milestone by milestone (see [Roadmap](#%EF%B8%8F-roadmap)). There is no packaged release yet.
 
 ---
 
@@ -142,8 +142,25 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 
 **Available now**
 
-- **Two decks** — drop an audio file from the Finder onto a deck; title, elapsed and remaining
-  time (tabular digits, readable from two metres), progress line, eject.
+- **Two decks** — drop an audio file from the Finder onto a deck, or load from the library;
+  title, artist, BPM, elapsed and remaining time (tabular digits, readable from two metres),
+  progress line, eject.
+- **Instant loading** — a track is playable about 4 ms after loading starts and fills while it
+  plays (progressive decode into a lock-free buffer), measured on a 4:18 MP3 that takes 450 ms
+  to decode and resample completely.
+- **Library** — import a folder (button or drop it from the Finder onto the library); title,
+  artist and album come from the tags, or from an `Artist - Title` file name. A virtualised list
+  stays fast with tens of thousands of tracks; search across title, artist, album and BPM
+  (accents ignored), sort by title, artist, BPM or duration. Load by double-click, Enter (first
+  empty deck), `1` / `2`, by dragging a row onto a deck, or from the DDJ-200 (Shift + jog rim
+  browses, Shift + headphone cue loads). Stored in SQLite; changed files are re-analysed.
+- **BPM and beatgrid analysis** — in the background on all cores but two, at a low system
+  priority: spectral-flux onsets, autocorrelation tempo with an octave check, refinement to
+  0.005 BPM by phase folding, and a downbeat-phase estimate from the kick band. A track without
+  a clear, steady beat gets *no* tempo instead of a guessed one. On 21 real tracks (house,
+  techno, disco, pop, a live drummer) every one got a tempo; an 8-minute track takes ~1.5 s.
+- **Waveform data** — three-band peaks (low / mid / high) at four zoom levels are computed in
+  the same pass and cached for the waveforms of M6.
 - **Pioneer-style cue** — paused: set the cue point; hold on the cue point to preview and
   release to return; press Play while holding to keep playing; while playing: back to cue and
   pause. Shift + Cue jumps to the start.
@@ -180,7 +197,7 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 - **About dialog** — version, donate and rate buttons, links to the source; external links may
   open only the allow-listed URLs.
 
-**Coming next** — library with BPM and beatgrid analysis (M5), waveforms (M6), sync, hot cues, loops and
+**Coming next** — waveforms (M6), sync, hot cues, loops and
 pads (M7), headphone cueing (M8). See the [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
@@ -196,12 +213,12 @@ mode and the MIDI monitor are in the settings.
 | Channel fader | Level | Fader start: up = play, back to zero = return to cue | ✅ |
 | Crossfader | Blend (curve chosen in the app) | — | ✅ |
 | Jog touch + platter | Scratch (vinyl mode); bend with vinyl mode off | Fast search | ✅ |
-| Jog rim | Pitch bend | Browse the library | ✅ / M5 |
+| Jog rim | Pitch bend | Browse the library | ✅ |
 | Tempo fader | Tempo (top = slower, as printed), soft takeover | — | ✅ |
 | Beat Sync | Short: sync · long: sync lock | Cycle tempo range (±6/10/16 %/wide) | M7 / ✅ |
 | EQ Hi / Mid / Low | Three-band isolator EQ | — | ✅ |
 | CFX | Bipolar filter (left low-pass, right high-pass) | — | ✅ |
-| Headphone cue | Pre-listen the channel | Load the selected track | M8 / M5 |
+| Headphone cue | Pre-listen the channel | Load the selected track | M8 / ✅ |
 | Master cue | Master in the headphones | — | M8 |
 | Transition FX | Echo-out / filter-out on the louder playing deck; again = cancel | Change effect | ✅ |
 | Pads 1–8 | Hot cue / beat loop / beat jump | Delete / exit loop | M7 |
@@ -237,7 +254,9 @@ Everything works without a controller:
 
 | Action | How |
 |---|---|
-| Load a track | Drop an audio file from the Finder onto a deck |
+| Load a track | Drop an audio file from the Finder onto a deck, or a library row (drag, double-click) |
+| Import music | "Ordner importieren", or drop a folder onto the library |
+| Library | Search field (↓ / Enter jumps into the list); in the list ↑ ↓, Page ↑ ↓, Home / End; Enter = first empty deck, `1` / `2` = deck 1 / 2; click a column to sort |
 | Play / Pause, Cue | Click, or focus the button and press Space / Enter (Cue: hold to preview) |
 | Jump to start | Shift + click on Cue |
 | Tempo | Tempo fader right of the deck: drag (top = slower), arrow keys, double-click = 0 % |
@@ -358,7 +377,9 @@ pnpm tauri dev        # build and start the app
 | Idle CPU | minimal | 0.2 % (debug build, nothing playing) |
 | Two decks rendering, keylock off / on | — | 0.4 % / 1.9 % of one core on average (release, `examples/bench_keylock.rs`) |
 | Slowest block with keylock (spectral work comes in bursts) | within the block's time | 566 µs: 11 % of a 256-frame block, 41 % of a 64-frame block |
-| Decode + resample a 3:43 MP3 | track load < 300 ms (analysed tracks) | ~360 ms (release) — a PCM cache arrives with the library (M5) |
+| Track load | < 300 ms | playable after ~4 ms (progressive decode; full decode of a 4:18 MP3: 450 ms) |
+| Analysis of an 8-minute track | background | ~1.5 s on one worker (release), memory flat (streamed) |
+| Playback while the library analyses | no block over budget | two keylocked decks at real-time priority, 8 analysis workers: 0 of 5,625 blocks over budget, slowest 25–29 % of 5.3 ms (`examples/load_test.rs`, 30 s, with other heavy load on the machine) |
 | Controller → audible | < 10 ms (without device latency) | one audio block (≤ 5.3 ms) + MIDI |
 
 ## 🧪 Testing
@@ -368,12 +389,12 @@ and CI commits new numbers whenever they change.
 
 | Suite | Where | Highlights |
 |---|---|---|
-| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, keylock pitch and timing at ±16 % (zero crossings), keylock alignment with the playhead, no gap after jumps at any tempo, reverse, scratch, bend, search, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps |
+| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, keylock pitch and timing at ±16 % (zero crossings), keylock alignment with the playhead, no gap after jumps at any tempo, reverse, scratch, bend, search, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps, progressive loading (reader never sees unpublished frames), BPM on synthetic patterns (kicks at 90–174 BPM, swing, open hats, breakdown, live-drummer drift) and refusals (silence, noise, random hits), peaks format, database migrations, import → analysis → peaks end to end |
 | Allocation guard | `crates/rille-engine/tests/no_alloc.rs` | 2,000 blocks under `assert_no_alloc` incl. tempo, keylock, scratch and reverse, plus a counter-check that a planted allocation is caught |
 | C++ allocation guard | `crates/rille-engine/tests/stretch_alloc.rs` | Signalsmith Stretch `process`/`reset`/`seek` at changing rates through the `malloc_logger` hook, with a counter-check |
 | CoreMIDI round trip | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtual DDJ-200 → port → decoder → action, and LEDs back |
-| Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | store and load races, position extrapolation, token sync and contrast, "no raw values" guard |
-| E2E (Playwright) | `e2e/` | load, play, cue, eject, keyboard operation, faders, tempo range and readout, keylock, reverse and bend while held, layout at 1024×680, settings, controller UI — against the mock backend |
+| Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | library search/sort/selection, store and load races, position extrapolation, token sync and contrast, "no raw values" guard |
+| E2E (Playwright) | `e2e/` | library import with progress, virtualised list, search, sort, keyboard loading, drag onto a deck, load, play, cue, eject, keyboard operation, faders, tempo range and readout, keylock, reverse and bend while held, layout at 1024×680, settings, controller UI — against the mock backend |
 
 Practices: Clippy with `-D warnings`, `unwrap`/`expect`/`panic` denied outside tests, and new
 guards are mutation-checked (the test is run once against deliberately broken code to prove it
@@ -392,7 +413,7 @@ rille/
 │   ├── rille-core/      shared types: DeckId, Command, Snapshot, TrackAudio
 │   ├── rille-engine/    realtime engine, DSP, cpal output, EngineSlot
 │   ├── rille-midi/      DDJ-200 table, decoder, mapping, soft takeover, LEDs, ports, virtual DDJ
-│   └── rille-library/   decoding and resampling (library + analysis follow in M5)
+│   └── rille-library/   decoding, resampling, scan, tags, BPM/beatgrid, peaks, SQLite
 ├── src-tauri/           app shell: AudioService, ControllerService, commands, bridge
 ├── src/                 React UI: deck/, mixer/, settings/, dev/, design/, ipc/, state/
 ├── e2e/                 Playwright tests
@@ -411,7 +432,7 @@ rille/
 | M2 | Pioneer DDJ-200: mapping, LEDs, takeover, hotplug, monitor | ✅ (hardware acceptance pending) |
 | M3 | Isolator EQ with kill, bipolar filter, transition FX (echo-out, filter-out) | ✅ |
 | M4 | Tempo ranges, keylock (Signalsmith Stretch), pitch bend, scratch, reverse | ✅ (jog calibration at hardware acceptance) |
-| M5 | Library: import, SQLite, BPM/beatgrid analysis, search, drag & drop | ⏳ |
+| M5 | Library: import, SQLite, BPM/beatgrid analysis, search, drag & drop | ✅ |
 | M6 | Waveforms (overview + scrolling detail, frequency colours), deck UI | ⏳ |
 | M7 | Sync & sync lock, hot cues, beat loops, beat jump, pad modes | ⏳ |
 | M8 | Headphone cueing on a second device or a 4-channel interface | ⏳ |

@@ -66,8 +66,20 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - Fenster-Screenshot: liegt rille hinter einem anderen Fenster oder auf dem zweiten Monitor,
   scheitert `screencapture -l`; dann nicht fremde Fenster abfotografieren, sondern über das
   Mock-Frontend im Browser prüfen.
-- Dekodieren einer 3:43-MP3 dauert ~360 ms (Release) – für die 300-ms-Ladezeit braucht M5 einen
-  PCM-Cache.
+- **Laden ist progressiv:** `TrackAudio` wird vorab in voller Länge alloziert und während des
+  Abspielens gefüllt (`ready` mit Release/Acquire). Die Engine liest dahinter Stille. Die Länge
+  aus dem Header ist bei MP3 nur geschätzt → Reserve; `finish` setzt die echte Länge.
+- **Library:** DB unter `~/Library/Application Support/io.celox.rille/library.db`, Peaks unter
+  `~/Library/Caches/io.celox.rille/peaks/<id>.bin` (dürfen gelöscht werden). Der Ordnerdialog
+  läuft auf der Rust-Seite (`library_choose_folder`), deshalb braucht das Webview keine
+  Dialog-Berechtigung. `TICKS_PER_ROW` (Shift + Jog-Rand) ist eine Annahme bis zur
+  Hardware-Abnahme.
+- Library-Zeilenhöhe steht in `tokens.css` (`--size-library-row`) **und** `tokens.ts`
+  (`sizes.libraryRow`, die Virtualisierung rechnet damit) – ein Test hält beide gleich.
+- Library-Ziehen nutzt Pointer Events, nicht HTML5-Drag-and-Drop (das kollidiert mit dem
+  nativen Finder-Drop). Das Deck unter dem Zeiger bekommt `data-drop-target`.
+- BPM: lieber „kein Tempo“ als ein geratenes. Neue Heuristiken immer gegen Rauschen und
+  Zufallsschläge prüfen (`bpm.rs`-Tests) und mit `examples/analyze` auf echten Tracks.
 - **CoreMIDI sieht neue Geräte nur, wenn der erste MIDI-Client des Prozesses auf einem Thread
   mit Run-Loop entstand.** `rille_midi::port::init_on_main_thread()` läuft deshalb im
   Tauri-`setup` (Hauptthread). Ohne das findet das Hotplug-Polling einen später angesteckten

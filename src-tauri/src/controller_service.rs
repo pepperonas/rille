@@ -61,6 +61,33 @@ impl From<MonitorEntry> for MonitorLine {
 pub enum ControllerEvent {
     Status(ControllerStatus),
     Monitor(Vec<MonitorLine>),
+    /// Move the library selection by this many rows (shift + jog rim).
+    LibraryScroll(i32),
+    /// Load the selected library track onto this deck (shift + headphone cue).
+    LibraryLoad(crate::dto::Deck),
+}
+
+/// Jog ticks per library row. An assumption until the hardware check: a slow turn of the rim
+/// should step row by row, a quick spin skip a page.
+pub const TICKS_PER_ROW: i32 = 4;
+
+/// Bundles jog ticks into whole rows; the remainder carries over to the next tick, and a turn
+/// in the other direction starts afresh.
+#[derive(Debug, Default)]
+pub struct ScrollAccumulator {
+    ticks: i32,
+}
+
+impl ScrollAccumulator {
+    pub fn push(&mut self, ticks: i32) -> i32 {
+        if ticks.signum() != self.ticks.signum() {
+            self.ticks = 0;
+        }
+        self.ticks += ticks;
+        let rows = self.ticks / TICKS_PER_ROW;
+        self.ticks -= rows * TICKS_PER_ROW;
+        rows
+    }
 }
 
 pub type ControllerNotify = Box<dyn Fn(ControllerEvent) + Send>;
@@ -248,6 +275,7 @@ struct Worker {
     monitor: Monitor,
     monitor_on: bool,
     started: Instant,
+    scroll: ScrollAccumulator,
 }
 
 impl Worker {
@@ -264,6 +292,7 @@ impl Worker {
             monitor: Monitor::new(),
             monitor_on: false,
             started: Instant::now(),
+            scroll: ScrollAccumulator::default(),
         }
     }
 
@@ -378,6 +407,20 @@ impl Worker {
 
     fn send_actions(&mut self, actions: impl IntoIterator<Item = ControllerAction>) {
         for action in actions {
+            match action {
+                ControllerAction::LibraryScroll(ticks) => {
+                    let rows = self.scroll.push(ticks);
+                    if rows != 0 {
+                        (self.notify)(ControllerEvent::LibraryScroll(rows));
+                    }
+                    continue;
+                }
+                ControllerAction::LoadSelected(deck) => {
+                    (self.notify)(ControllerEvent::LibraryLoad(deck.into()));
+                    continue;
+                }
+                _ => {}
+            }
             for command in commands_for(action) {
                 self.engine.send(command);
             }
@@ -559,7 +602,7 @@ mod tests {
         );
         assert!(
             commands_for(A::LibraryScroll(1)).is_empty(),
-            "arrives with the library"
+            "library actions are events for the frontend, not engine commands"
         );
         assert_eq!(
             commands_for(A::Eq {
@@ -619,5 +662,18 @@ mod tests {
             meaning: None,
         });
         assert_eq!((line.hex.as_str(), line.outgoing), ("9F 01 7F", true));
+    }
+
+    #[test]
+    fn jog_ticks_are_bundled_into_rows() {
+        let mut acc = ScrollAccumulator::default();
+        let rows: Vec<i32> = [1, 1, 1, 1, 1, 5, -1, -3, 2]
+            .into_iter()
+            .map(|t| acc.push(t))
+            .collect();
+        // 4 ticks make a row; leftovers carry; reversing drops the leftover.
+        assert_eq!(rows, [0, 0, 0, 1, 0, 1, 0, -1, 0]);
+        let mut fast = ScrollAccumulator::default();
+        assert_eq!(fast.push(TICKS_PER_ROW * 5 + 1), 5);
     }
 }

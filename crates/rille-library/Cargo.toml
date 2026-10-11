@@ -22,3 +22,7 @@ workspace = true
 
 [dev-dependencies]
 tempfile = "3"
+rille-engine.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+libc = "0.2"

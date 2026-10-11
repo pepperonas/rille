@@ -410,6 +410,9 @@ pub struct DeckLoaded {
     pub deck: Deck,
     pub track_id: u64,
     pub title: String,
+    pub artist: Option<String>,
+    /// From the library analysis; `None` for tracks not (yet) analysed or without a tempo.
+    pub bpm: Option<f64>,
     pub duration_secs: f64,
 }
 

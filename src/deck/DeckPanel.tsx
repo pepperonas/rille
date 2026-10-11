@@ -38,9 +38,21 @@ export function DeckPanel({ deck }: Props) {
       {info.status === 'ready' ? (
         <div className={styles.loaded}>
           <div className={styles.main}>
-            <h2 className={styles.title} title={info.title}>
-              {info.title}
-            </h2>
+            <div>
+              <h2 className={styles.title} title={info.title}>
+                {info.title}
+              </h2>
+              {(info.artist || info.bpm !== null) && (
+                <p className={styles.meta}>
+                  {info.artist && <span>{info.artist}</span>}
+                  {info.bpm !== null && (
+                    <span className={`${styles.bpm} numeric`} aria-label="Track-Tempo">
+                      {info.bpm.toFixed(1)} BPM
+                    </span>
+                  )}
+                </p>
+              )}
+            </div>
             <TimeReadout deck={deck} />
             <div className={styles.controls}>
               <Transport deck={deck} />

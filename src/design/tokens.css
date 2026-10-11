@@ -93,6 +93,11 @@
   --size-kill: 22px;
   --size-switch-width: 52px;
   --size-switch-height: 32px;
+  --size-library-row: 36px;
+  --size-library-bpm: 72px;
+  --size-library-time: 64px;
+  --size-library-status: 28px;
+  --size-search: 280px;
 
   /* Strokes */
   --stroke-hairline: 1px;

@@ -4,6 +4,7 @@ mod audio_service;
 mod commands;
 mod controller_service;
 mod dto;
+mod library_service;
 
 use std::sync::Arc;
 
@@ -13,6 +14,7 @@ use tracing_subscriber::EnvFilter;
 use audio_service::{AudioService, UiEvent};
 use commands::StateChannel;
 use controller_service::{ControllerEvent, ControllerService};
+use library_service::{LibraryEvent, LibraryService, worker_count};
 
 pub fn run() {
     tracing_subscriber::fmt()
@@ -21,6 +23,7 @@ pub fn run() {
 
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(StateChannel::default())
         .setup(|app| {
             // Must happen on the main thread (run loop), see the function's docs.
@@ -34,6 +37,7 @@ pub fn run() {
                 Box::new(move |event| deliver_controller(&handle, event)),
             );
             app.manage(audio);
+            start_library(app);
             if let Some(controller) = controller {
                 app.manage(controller);
             }
@@ -45,6 +49,11 @@ pub fn run() {
             commands::audio_status,
             commands::audio_open,
             commands::deck_load_file,
+            commands::deck_load_track,
+            commands::library_tracks,
+            commands::library_progress,
+            commands::library_import,
+            commands::library_choose_folder,
             commands::deck_command,
             commands::mixer_command,
             commands::controller_status,
@@ -55,6 +64,36 @@ pub fn run() {
     if let Err(err) = result {
         tracing::error!(%err, "rille konnte nicht starten");
         std::process::exit(1);
+    }
+}
+
+/// Library database in Application Support, peaks in Caches (they can be rebuilt).
+fn start_library(app: &tauri::App) {
+    let (Ok(data), Ok(cache)) = (app.path().app_data_dir(), app.path().app_cache_dir()) else {
+        tracing::error!("no application directories; library disabled");
+        return;
+    };
+    let cores = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let handle = app.handle().clone();
+    let notify = Arc::new(move |event: LibraryEvent| {
+        let result = match event {
+            LibraryEvent::Tracks(tracks) => handle.emit("library-tracks", tracks),
+            LibraryEvent::Progress(p) => handle.emit("library-progress", p),
+        };
+        if let Err(e) = result {
+            tracing::warn!(%e, "could not deliver library event");
+        }
+    });
+    match LibraryService::start(
+        &data.join("library.db"),
+        cache.join("peaks"),
+        worker_count(cores),
+        notify,
+    ) {
+        Ok(library) => {
+            app.manage(library);
+        }
+        Err(e) => tracing::error!(%e, "library unavailable"),
     }
 }
 
@@ -86,6 +125,8 @@ fn deliver_controller(app: &tauri::AppHandle, event: ControllerEvent) {
     let result = match event {
         ControllerEvent::Status(status) => app.emit("controller-changed", status),
         ControllerEvent::Monitor(lines) => app.emit("midi-monitor", lines),
+        ControllerEvent::LibraryScroll(rows) => app.emit("library-scroll", rows),
+        ControllerEvent::LibraryLoad(deck) => app.emit("library-load", deck),
     };
     if let Err(e) = result {
         tracing::warn!(%e, "could not deliver controller event");

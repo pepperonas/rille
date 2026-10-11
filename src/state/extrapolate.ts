@@ -37,7 +37,8 @@ export const NEXT_RANGE: Record<TempoRange, TempoRange> = {
 
 /** Tempo change in percent for a fader position, e.g. `+2.40 %`. */
 export function formatTempo(tempo: number, range: TempoRange): string {
-  const pct = (Number.isFinite(tempo) ? Math.max(-1, Math.min(1, tempo)) : 0) * RANGE_SPAN[range] * 100;
+  const pct =
+    (Number.isFinite(tempo) ? Math.max(-1, Math.min(1, tempo)) : 0) * RANGE_SPAN[range] * 100;
   const rounded = Math.round(pct * 100) / 100;
   if (rounded === 0) return '0.00 %';
   return `${rounded > 0 ? '+' : '−'}${Math.abs(rounded).toFixed(2)} %`;

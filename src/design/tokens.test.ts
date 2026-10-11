@@ -30,6 +30,7 @@ describe('numeric mirrors of tokens.css', () => {
   it('keeps sizes in sync', () => {
     expect(sizes.playButton).toBe(px('size-play-button'));
     expect(sizes.transportButton).toBe(px('size-transport-button'));
+    expect(sizes.libraryRow).toBe(px('size-library-row'));
   });
 
   it('keeps shapes in sync', () => {

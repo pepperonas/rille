@@ -248,6 +248,17 @@ impl Library {
             .optional()?)
     }
 
+    pub fn track_by_path(&self, path: &Path) -> Result<Option<TrackRow>, DbError> {
+        Ok(self
+            .conn
+            .query_row(
+                &format!("SELECT {COLUMNS} FROM tracks WHERE path = ?1"),
+                params![path.to_string_lossy()],
+                row,
+            )
+            .optional()?)
+    }
+
     /// Tracks still to analyse, oldest first.
     pub fn pending(&self) -> Result<Vec<(i64, PathBuf)>, DbError> {
         let mut stmt = self
@@ -403,6 +414,13 @@ mod tests {
             ("A2", None, AnalysisState::Pending)
         );
         assert_eq!(lib.pending().unwrap(), [(id, PathBuf::from("/m/a.mp3"))]);
+        assert_eq!(
+            lib.track_by_path(Path::new("/m/a.mp3"))
+                .unwrap()
+                .map(|t| t.id),
+            Some(id)
+        );
+        assert!(lib.track_by_path(Path::new("/m/b.mp3")).unwrap().is_none());
     }
 
     #[test]

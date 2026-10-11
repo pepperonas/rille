@@ -7,6 +7,19 @@ All notable changes to rille are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- M5 library: import folders (button, or drop from the Finder onto the library), tags from
+  ID3/Vorbis/MP4 with an `Artist - Title` file-name fallback, SQLite database with versioned
+  migrations (refuses a newer schema instead of damaging it), changed files are re-analysed.
+- Background analysis on `cores − 2` workers at QoS utility: BPM and beatgrid (spectral flux,
+  autocorrelation with octave check, phase-folding refinement, kick-band downbeat phase,
+  consistency check that rejects noise and random hits instead of guessing) and three-band
+  waveform peaks at four zoom levels (binary format "RLPK" v1, cached per track).
+- Progressive loading: a track is playable ~4 ms after loading starts and fills while it plays
+  (lock-free published-frame counter); a newer load or an eject cancels the decode.
+- Library UI: virtualised list, search (title, artist, album, BPM; accents ignored), sorting,
+  analysis progress, loading by double-click, Enter, `1` / `2`, pointer drag onto a deck; decks
+  show artist and BPM. DDJ-200: Shift + jog rim browses, Shift + headphone cue loads.
+- `examples/analyze.rs`, `examples/decode.rs`, `examples/load_test.rs` (rille-library).
 - M4 tempo: tempo fader per deck with ranges ±6 / ±10 / ±16 % / wide (±50 %), top = slower as
   printed on the DDJ-200; varispeed via 4-point Hermite interpolation. Keylock with Signalsmith
   Stretch (latency-compensated, a varispeed bridge covers its start-up after jumps), pitch bend
@@ -33,6 +46,9 @@ All notable changes to rille are documented here. The format follows
 - About dialog: app icon, version, "Spenden via PayPal" and "celox.io bewerten" buttons, links
   to the source code and celox.io. External links go through the Tauri opener plugin, scoped
   to exactly these URLs (a test mirrors the plugin's glob matching, including lookalike hosts).
+
+### Changed
+- Track loading no longer decodes the whole file first (was ~360 ms for a 3:43 MP3).
 
 ### Fixed
 - Keylock: pausing, jumping, reversing, touching the platter or switching KEY off no longer

@@ -44,6 +44,25 @@ struct LoadRequest {
     deck: DeckId,
     path: PathBuf,
     id: u64,
+    meta: TrackMeta,
+}
+
+/// What the deck shows about a track: from the library, or just the file name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TrackMeta {
+    pub title: String,
+    pub artist: Option<String>,
+    pub bpm: Option<f64>,
+}
+
+impl TrackMeta {
+    pub fn from_path(path: &Path) -> TrackMeta {
+        TrackMeta {
+            title: title_from_path(path),
+            artist: None,
+            bpm: None,
+        }
+    }
 }
 
 struct OutputState {
@@ -199,11 +218,16 @@ impl AudioService {
     }
 
     /// Queue a file for decoding. Returns the track id the deck will report once loaded.
-    pub fn load_file(&self, deck: DeckId, path: PathBuf) -> Result<u64, String> {
+    pub fn load_file(&self, deck: DeckId, path: PathBuf, meta: TrackMeta) -> Result<u64, String> {
         let id = self.shared.next_track_id.fetch_add(1, Ordering::Relaxed);
         self.shared.latest_request[deck.index()].store(id, Ordering::Release);
         lock(&self.shared.loader_tx[deck.index()])
-            .send(LoadRequest { deck, path, id })
+            .send(LoadRequest {
+                deck,
+                path,
+                id,
+                meta,
+            })
             .map_err(|_| "Der Ladevorgang ist nicht verfügbar".to_string())?;
         Ok(id)
     }
@@ -278,7 +302,7 @@ impl AudioService {
         let spawned = thread::Builder::new().name(name).spawn(move || {
             for request in rx {
                 let deck = Deck::from(request.deck);
-                let title = title_from_path(&request.path);
+                let title = request.meta.title.clone();
                 let is_current = || {
                     shared.latest_request[request.deck.index()].load(Ordering::Acquire)
                         == request.id
@@ -327,6 +351,8 @@ impl AudioService {
                     deck,
                     track_id: request.id,
                     title,
+                    artist: request.meta.artist.clone(),
+                    bpm: request.meta.bpm,
                     duration_secs,
                 }));
                 // A newer load or an unload on this deck stops the decode; what is decoded stays.

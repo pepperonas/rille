@@ -12,6 +12,12 @@
   padding: var(--space-4);
 }
 
+/* A library track is dragged over this deck. */
+.deck[data-drop-target] {
+  outline: var(--stroke-thick) solid var(--accent);
+  outline-offset: calc(-1 * var(--stroke-thick));
+}
+
 .deck[data-deck='b'] {
   --accent: var(--deck-b);
   --on-accent: var(--deck-b-on);
@@ -125,6 +131,22 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.meta {
+  margin: var(--space-1) 0 0;
+  display: flex;
+  gap: var(--space-3);
+  font: var(--type-title-s);
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bpm {
+  color: var(--accent);
+  font-stretch: var(--font-stretch-emphasized);
 }
 
 .demo {

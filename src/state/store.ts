@@ -7,11 +7,19 @@ import type {
   DeckLoaded,
   StateFrame,
 } from '../ipc/types';
+import { initialLibrary, type LibraryState } from '../library/model';
 
 export type DeckInfo =
   | { status: 'empty' }
   | { status: 'loading'; requestId: number | null; title: string }
-  | { status: 'ready'; trackId: number; title: string; durationSecs: number }
+  | {
+      status: 'ready';
+      trackId: number;
+      title: string;
+      artist: string | null;
+      bpm: number | null;
+      durationSecs: number;
+    }
   | { status: 'error'; title: string; message: string };
 
 export interface AppState {
@@ -21,6 +29,7 @@ export interface AppState {
   decks: Record<Deck, DeckInfo>;
   audio: AudioStatus | null;
   controller: ControllerStatus | null;
+  library: LibraryState;
 }
 
 export const initialState: AppState = {
@@ -29,6 +38,7 @@ export const initialState: AppState = {
   decks: { a: { status: 'empty' }, b: { status: 'empty' } },
   audio: null,
   controller: null,
+  library: initialLibrary,
 };
 
 // Pure transitions, unit-tested.
@@ -45,7 +55,9 @@ export function loadAccepted(s: AppState, deck: Deck, requestId: number): AppSta
 
 /** Does a result for `trackId` belong to the load the deck is currently waiting for? */
 function awaited(d: DeckInfo, trackId: number | null): boolean {
-  return d.status === 'loading' && (d.requestId === null || trackId === null || d.requestId === trackId);
+  return (
+    d.status === 'loading' && (d.requestId === null || trackId === null || d.requestId === trackId)
+  );
 }
 
 /** A finished load only wins if it is the one most recently requested for that deck and the
@@ -57,6 +69,8 @@ export function loaded(s: AppState, e: DeckLoaded): AppState {
     status: 'ready',
     trackId: e.trackId,
     title: e.title,
+    artist: e.artist ?? null,
+    bpm: e.bpm ?? null,
     durationSecs: e.durationSecs,
   };
   return { ...s, decks: { ...s.decks, [e.deck]: info } };
@@ -75,6 +89,11 @@ export function unloaded(s: AppState, deck: Deck): AppState {
 
 export function frameReceived(s: AppState, frame: StateFrame, now: number): AppState {
   return { ...s, frame, receivedAt: now };
+}
+
+export function updateLibrary(s: AppState, fn: (l: LibraryState) => LibraryState): AppState {
+  const library = fn(s.library);
+  return library === s.library ? s : { ...s, library };
 }
 
 class Store {
