@@ -1,0 +1,47 @@
+.detail {
+  position: relative;
+  flex: 1;
+  min-height: var(--size-detail-min);
+  border-radius: var(--shape-md);
+  background: var(--md-surface-container);
+  overflow: hidden;
+  outline: none;
+}
+
+.detail:focus-visible {
+  box-shadow: inset 0 0 0 var(--stroke-thick) var(--md-primary);
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: var(--stroke-thick);
+  margin-left: calc(-1 * var(--stroke-hairline));
+  background: var(--md-on-surface);
+}
+
+.note {
+  position: absolute;
+  inset: auto 0 var(--space-3);
+  margin: 0;
+  text-align: center;
+  font: var(--type-body-s);
+  color: var(--md-on-surface-variant);
+}
+
+.zoom {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-2);
+  font: var(--type-label-s);
+  color: var(--md-on-surface-variant);
+}

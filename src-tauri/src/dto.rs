@@ -413,6 +413,8 @@ pub struct DeckLoaded {
     pub artist: Option<String>,
     /// From the library analysis; `None` for tracks not (yet) analysed or without a tempo.
     pub bpm: Option<f64>,
+    /// Library row of the track (waveform, beatgrid); `None` without a library.
+    pub library_id: Option<i64>,
     pub duration_secs: f64,
 }
 

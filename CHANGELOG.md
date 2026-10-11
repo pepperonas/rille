@@ -7,6 +7,13 @@ All notable changes to rille are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- M6 waveforms: scrolling detail view in WebGL2 (one draw call; peaks as textures per zoom
+  level, beatgrid in the shader, played part dimmed) with zoom 2–32 s by mouse wheel or + / −,
+  and a Canvas2D overview with played part, cue mark and click-to-seek. Three bands in shades
+  of the deck colour, resolved from CSS tokens. Drawn only while a deck plays.
+- Remaining-time warning for the last 30 seconds.
+- Files dropped onto a deck join the library; the analysis of a track on a deck jumps the
+  queue; missing cached peaks are recomputed on demand (`library_peaks`).
 - M5 library: import folders (button, or drop from the Finder onto the library), tags from
   ID3/Vorbis/MP4 with an `Artist - Title` file-name fallback, SQLite database with versioned
   migrations (refuses a newer schema instead of damaging it), changed files are re-analysed.

@@ -4,6 +4,13 @@
   --accent-container: var(--deck-a-container);
   --on-accent-container: var(--deck-a-on-container);
 
+  /* Waveform band colours, derived from the deck accent (resolved to RGB in waveform/colors). */
+  --wave-low: var(--accent);
+  --wave-mid: color-mix(in oklab, var(--accent) 45%, var(--md-on-surface));
+  --wave-high: var(--md-on-surface);
+  --wave-grid: var(--md-on-surface-variant);
+  --wave-cue: var(--md-tertiary);
+
   display: flex;
   flex-direction: column;
   min-width: 0;

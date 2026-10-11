@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use rille_core::Command;
 use rille_engine::output::{self, OutputRequest};
-use tauri::ipc::Channel;
+use tauri::ipc::{Channel, Response};
 use tauri::{Manager, State};
 
 use crate::audio_service::{AudioService, TrackMeta};
@@ -60,10 +60,10 @@ pub fn deck_load_file(
     audio: State<'_, AudioService>,
     app: tauri::AppHandle,
 ) -> Result<u64, String> {
-    // A file the library knows brings its tags and tempo along.
+    // The file joins the library (tags, tempo, waveform); without a library it still plays.
     let meta = app
         .try_state::<LibraryService>()
-        .and_then(|lib| lib.load_info_for_path(&path))
+        .and_then(|lib| lib.ensure(&path))
         .map(meta_of)
         .unwrap_or_else(|| TrackMeta::from_path(&path));
     audio.load_file(deck.into(), path, meta)
@@ -74,6 +74,7 @@ fn meta_of(info: LoadInfo) -> TrackMeta {
         title: info.title,
         artist: info.artist,
         bpm: info.bpm,
+        library_id: Some(info.id),
     }
 }
 
@@ -93,11 +94,20 @@ pub fn deck_load_track(
     audio: State<'_, AudioService>,
     app: tauri::AppHandle,
 ) -> Result<u64, String> {
-    let info = library(&app)?
-        .load_info(id)
+    let library = library(&app)?;
+    let row = library
+        .row(id)
         .ok_or_else(|| "Dieser Track ist nicht mehr in der Library".to_string())?;
+    library.prioritize(&row);
+    let info = LoadInfo::from(&row);
     let path = info.path.clone();
     audio.load_file(deck.into(), path, meta_of(info))
+}
+
+/// Waveform peaks of a library track, binary ("RLPK" v1, see `analysis/peaks.rs`).
+#[tauri::command]
+pub fn library_peaks(id: i64, app: tauri::AppHandle) -> Result<Response, String> {
+    library(&app)?.peaks(id).map(Response::new)
 }
 
 #[tauri::command]

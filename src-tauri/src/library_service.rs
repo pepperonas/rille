@@ -54,6 +54,8 @@ pub struct LibraryTrack {
     pub album: Option<String>,
     pub duration: Option<f64>,
     pub bpm: Option<f64>,
+    /// Seconds to the first beat of the grid; with `bpm` the whole beatgrid.
+    pub first_beat: Option<f64>,
     pub analysis: Analysis,
     pub error: Option<String>,
 }
@@ -68,6 +70,7 @@ impl From<TrackRow> for LibraryTrack {
             album: t.album,
             duration: t.duration,
             bpm: t.grid.map(|g| g.bpm),
+            first_beat: t.grid.map(|g| g.first_beat),
             analysis: t.analysis.into(),
             error: t.error,
         }
@@ -106,6 +109,7 @@ pub type LibraryNotify = Arc<dyn Fn(LibraryEvent) + Send + Sync>;
 /// What to put on a deck for a library track.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadInfo {
+    pub id: i64,
     pub path: PathBuf,
     pub title: String,
     pub artist: Option<String>,
@@ -115,6 +119,7 @@ pub struct LoadInfo {
 impl From<&TrackRow> for LoadInfo {
     fn from(t: &TrackRow) -> LoadInfo {
         LoadInfo {
+            id: t.id,
             path: t.path.clone(),
             title: t.title.clone(),
             artist: t.artist.clone(),
@@ -151,6 +156,29 @@ impl Queue {
             self.waiting.insert(id);
             self.jobs.push_back((id, path));
         }
+        self.queued += 1;
+        true
+    }
+
+    /// Queue (or move) a track to the front: a deck is waiting for it. A track already being
+    /// analysed stays as it is.
+    fn push_front(&mut self, id: i64, path: PathBuf) -> bool {
+        if self.running.contains(&id) || self.rerun.contains_key(&id) {
+            return false;
+        }
+        if self.waiting.contains(&id) {
+            if let Some(job) = self
+                .jobs
+                .iter()
+                .position(|(j, _)| *j == id)
+                .and_then(|at| self.jobs.remove(at))
+            {
+                self.jobs.push_front(job);
+            }
+            return false;
+        }
+        self.waiting.insert(id);
+        self.jobs.push_front((id, path));
         self.queued += 1;
         true
     }
@@ -270,15 +298,61 @@ impl LibraryService {
         lock(&self.shared.queue).progress()
     }
 
-    pub fn load_info(&self, id: i64) -> Option<LoadInfo> {
-        let row = lock(&self.shared.db).track(id).ok()??;
+    /// A track goes onto a deck: make sure it is in the library (a file dropped from the
+    /// Finder is added) and that its analysis runs next, because the deck waits for its
+    /// waveform. `None` if the file cannot even be stat'ed or the database fails.
+    pub fn ensure(&self, path: &Path) -> Option<LoadInfo> {
+        let existing = lock(&self.shared.db).track_by_path(path).ok().flatten();
+        let row = match existing {
+            Some(row) => row,
+            None => {
+                let (track, _) = self.add_file(path)?;
+                self.post_tracks(vec![track.clone()]);
+                lock(&self.shared.db).track(track.id).ok()??
+            }
+        };
+        self.prioritize(&row);
         Some(LoadInfo::from(&row))
     }
 
-    /// Library data for a file dropped from the Finder, if it was imported before.
-    pub fn load_info_for_path(&self, path: &Path) -> Option<LoadInfo> {
-        let row = lock(&self.shared.db).track_by_path(path).ok()??;
-        Some(LoadInfo::from(&row))
+    /// Move a pending track to the front of the analysis queue.
+    pub fn prioritize(&self, row: &TrackRow) {
+        if row.analysis != AnalysisState::Pending {
+            return;
+        }
+        let mut q = lock(&self.shared.queue);
+        if q.push_front(row.id, row.path.clone()) {
+            self.post_progress(q.progress());
+        }
+        drop(q);
+        self.shared.wake.notify_one();
+    }
+
+    pub fn row(&self, id: i64) -> Option<TrackRow> {
+        lock(&self.shared.db).track(id).ok()?
+    }
+
+    /// The waveform peaks of a track (format "RLPK"). If an analysed track lost its cache
+    /// file, the analysis runs again and the caller is told to wait for it.
+    pub fn peaks(&self, id: i64) -> Result<Vec<u8>, String> {
+        match std::fs::read(self.peaks_path(id)) {
+            Ok(bytes) => Ok(bytes),
+            Err(_) => {
+                let row = self
+                    .row(id)
+                    .ok_or_else(|| "Dieser Track ist nicht mehr in der Library".to_string())?;
+                if row.analysis == AnalysisState::Done {
+                    if let Err(e) = lock(&self.shared.db).set_pending(id) {
+                        tracing::warn!(%e, "could not queue analysis again");
+                    }
+                    if let Some(row) = self.row(id) {
+                        self.post_tracks(vec![row.clone().into()]);
+                        self.prioritize(&row);
+                    }
+                }
+                Err("Waveform wird berechnet".to_string())
+            }
+        }
     }
 
     pub fn peaks_path(&self, id: i64) -> PathBuf {
@@ -619,6 +693,23 @@ mod tests {
     }
 
     #[test]
+    fn a_track_a_deck_waits_for_jumps_the_queue() {
+        let mut q = Queue::default();
+        for id in 1..=3 {
+            q.push(id, format!("/{id}").into());
+        }
+        assert!(
+            !q.push_front(3, "/3".into()),
+            "already queued: moved, not counted"
+        );
+        assert!(q.push_front(9, "/9".into()));
+        let order: Vec<i64> = std::iter::from_fn(|| q.take().map(|j| j.0)).collect();
+        assert_eq!(order, [9, 3, 1, 2]);
+        assert!(!q.push_front(1, "/1".into()), "running: left alone");
+        assert_eq!(q.progress().queued, 4);
+    }
+
+    #[test]
     fn an_unreadable_database_is_moved_aside_and_replaced() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("library.db");
@@ -756,9 +847,38 @@ mod tests {
         );
         assert!(seen.iter().any(|t| t.id == broken.id));
 
-        let info = service.load_info(kicks.id).unwrap();
-        assert_eq!(info.path, music.join("DJ - Kicks.wav"));
-        assert_eq!(service.load_info_for_path(&info.path), Some(info));
+        let info = service.ensure(&music.join("DJ - Kicks.wav")).unwrap();
+        assert_eq!((info.id, info.bpm.is_some()), (kicks.id, true));
+        assert!(kicks.first_beat.is_some());
+        let peaks = service.peaks(kicks.id).unwrap();
+        assert_eq!(&peaks[..4], b"RLPK");
+        service.stop();
+    }
+
+    #[test]
+    fn a_file_loaded_onto_a_deck_joins_the_library_and_gets_its_waveform() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("Dropped.wav");
+        write_kicks(&file, 8.0);
+        let (service, rx, seen) = start(dir.path());
+        let info = service.ensure(&file).unwrap();
+        assert_eq!(info.title, "Dropped");
+        assert!(service.peaks(info.id).is_err(), "not analysed yet");
+        wait_idle(&rx);
+        assert!(service.peaks(info.id).is_ok());
+        assert!(lock(&seen).iter().any(|t| t.id == info.id));
+        // Loading it again finds the same row.
+        assert_eq!(service.ensure(&file).map(|i| i.id), Some(info.id));
+
+        // The cache was cleared: asking for the peaks starts the analysis again.
+        std::fs::remove_file(service.peaks_path(info.id)).unwrap();
+        assert!(service.peaks(info.id).is_err());
+        assert_eq!(
+            service.row(info.id).unwrap().analysis,
+            AnalysisState::Pending
+        );
+        wait_idle(&rx);
+        assert!(service.peaks(info.id).is_ok());
         service.stop();
     }
 

@@ -25,6 +25,7 @@ function track(id: number, over: Partial<LibraryTrack> = {}): LibraryTrack {
     album: null,
     duration: 200,
     bpm: 120,
+    firstBeat: 0.1,
     analysis: 'done',
     error: null,
     ...over,

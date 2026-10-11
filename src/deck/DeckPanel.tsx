@@ -2,6 +2,10 @@ import { backend } from '../ipc';
 import type { Deck } from '../ipc/types';
 import { loadIntoDeck, unloadDeck } from '../state/connect';
 import { useAppState } from '../state/store';
+import { trackById } from '../library/model';
+import { Detail } from '../waveform/Detail';
+import { Overview } from '../waveform/Overview';
+import { usePeaks } from '../waveform/usePeaks';
 import { TimeReadout } from './TimeReadout';
 import { TempoButtons, TempoFader } from './Tempo';
 import { Transport } from './Transport';
@@ -15,6 +19,11 @@ interface Props {
 export function DeckPanel({ deck }: Props) {
   const label = deck === 'a' ? 'Deck 1' : 'Deck 2';
   const info = useAppState((s) => s.decks[deck]);
+  const libraryId = info.status === 'ready' ? info.libraryId : null;
+  // The library has the latest analysis (tempo, grid) – it may finish after loading.
+  const libTrack = useAppState((s) => trackById(s.library.tracks, libraryId));
+  const peaks = usePeaks(libraryId);
+  const bpm = libTrack?.bpm ?? (info.status === 'ready' ? info.bpm : null);
 
   return (
     <section className={styles.deck} data-deck={deck} aria-label={label}>
@@ -42,12 +51,12 @@ export function DeckPanel({ deck }: Props) {
               <h2 className={styles.title} title={info.title}>
                 {info.title}
               </h2>
-              {(info.artist || info.bpm !== null) && (
+              {(info.artist || bpm !== null) && (
                 <p className={styles.meta}>
                   {info.artist && <span>{info.artist}</span>}
-                  {info.bpm !== null && (
+                  {bpm !== null && (
                     <span className={`${styles.bpm} numeric`} aria-label="Track-Tempo">
-                      {info.bpm.toFixed(1)} BPM
+                      {bpm.toFixed(1)} BPM
                     </span>
                   )}
                 </p>
@@ -58,7 +67,14 @@ export function DeckPanel({ deck }: Props) {
                 </p>
               )}
             </div>
+            <Detail
+              deck={deck}
+              peaks={peaks}
+              bpm={libTrack?.bpm ?? null}
+              firstBeat={libTrack?.firstBeat ?? null}
+            />
             <TimeReadout deck={deck} />
+            <Overview deck={deck} peaks={peaks} />
             <div className={styles.controls}>
               <Transport deck={deck} />
               <TempoButtons deck={deck} />

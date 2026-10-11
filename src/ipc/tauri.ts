@@ -44,6 +44,7 @@ export const tauriBackend: Backend = {
   loadTrack: (deck, id) => invoke('deck_load_track', { deck, id }),
   libraryTracks: () => invoke('library_tracks'),
   libraryProgress: () => invoke('library_progress'),
+  libraryPeaks: (id) => invoke<ArrayBuffer>('library_peaks', { id }),
   libraryImport: (paths) => invoke('library_import', { paths }),
   libraryChooseFolder: () => invoke('library_choose_folder'),
   controllerStatus: () => invoke('controller_status'),

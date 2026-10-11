@@ -1,0 +1,51 @@
+.overview {
+  --progress: 0;
+  --cue: 0;
+  position: relative;
+  height: var(--size-overview);
+  border-radius: var(--shape-sm);
+  background: var(--md-surface-container);
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Analysis still running: a quiet line instead of an empty box. */
+.waiting {
+  position: absolute;
+  inset: 50% 0 auto;
+  height: var(--stroke-hairline);
+  background: var(--md-outline-variant);
+}
+
+.played {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--progress) * 100%);
+  background: color-mix(in srgb, var(--md-surface-container) 55%, transparent);
+}
+
+.playhead,
+.cue {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: var(--stroke-thick);
+  margin-left: calc(-1 * var(--stroke-hairline));
+}
+
+.playhead {
+  left: calc(var(--progress) * 100%);
+  background: var(--md-on-surface);
+}
+
+.cue {
+  left: calc(var(--cue) * 100%);
+  background: var(--wave-cue);
+}

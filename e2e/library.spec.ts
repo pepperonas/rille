@@ -35,13 +35,13 @@ test('an empty library explains itself and imports a folder with progress', asyn
 test.describe('with a library', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/?demo');
-    await expect(library(page)).toContainText('64 Tracks');
+    await expect(library(page)).toContainText('66 Tracks');
   });
 
   test('the list is virtualised', async ({ page }) => {
     const rendered = await list(page).getByRole('option').count();
     expect(rendered).toBeGreaterThan(5);
-    expect(rendered).toBeLessThan(64);
+    expect(rendered).toBeLessThan(66);
     await list(page).evaluate((el) => (el.scrollTop = el.scrollHeight));
     // The rows follow the scroll position on the next render.
     await expect
@@ -50,7 +50,7 @@ test.describe('with a library', () => {
           .getByRole('option')
           .evaluateAll((rows) => rows.map((r) => r.id)),
       )
-      .toContain('track-64');
+      .toContain('track-66');
   });
 
   test('search filters by text and tempo', async ({ page }) => {
@@ -60,7 +60,7 @@ test.describe('with a library', () => {
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
     for (const text of await rows.locator(cell(3)).allTextContents()) expect(text).toBe('Ada Lux');
-    await expect(library(page)).toContainText(`${count} von 64`);
+    await expect(library(page)).toContainText(`${count} von 66`);
 
     await search.fill('zzz nichts');
     await expect(library(page)).toContainText('Keine Treffer');

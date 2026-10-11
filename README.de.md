@@ -47,7 +47,7 @@
 > **Stand: frühe Entwicklung (v0.1.0).** Zwei Decks spielen Dateien aus dem Finder, mit Cue nach
 > Pioneer-Art, Tempo mit Keylock, Pitch-Bend, Scratch und Reverse, Isolator-EQ, Filter,
 > Transition-FX, Kanalfadern, Crossfader und Pegeln — bedienbar mit Maus, Tastatur und DDJ-200.
-> Dazu eine Library mit BPM-/Beatgrid-Analyse. Waveforms und Beat-Funktionen folgen Meilenstein für
+> Dazu eine Library mit BPM-/Beatgrid-Analyse und Waveforms. Beat-Funktionen folgen Meilenstein für
 > Meilenstein (siehe [Roadmap](#%EF%B8%8F-roadmap)). Ein fertiges Release gibt es noch nicht.
 
 ---
@@ -110,8 +110,14 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
   ohne klaren, gleichmäßigen Beat bekommt *kein* Tempo statt eines geratenen. Auf 21 echten
   Tracks (House, Techno, Disco, Pop, ein Live-Schlagzeuger) bekam jeder ein Tempo; ein
   8-Minuten-Track braucht ~1,5 s.
-- **Waveform-Daten** — Spitzenwerte in drei Bändern (tief / mittel / hoch) in vier Zoomstufen
-  entstehen im selben Durchlauf und liegen für die Waveforms aus M6 im Cache.
+- **Waveforms** — eine mitlaufende Detailansicht (WebGL2, ein Draw-Call pro Bild) mit Beatgrid
+  (jeder vierte Schlag kräftiger) und vier Zoomstufen von 2 bis 32 s (Mausrad oder + / −, für
+  beide Decks gemeinsam), dazu eine Übersicht des ganzen Tracks mit gespieltem Teil, Cue-Marke
+  und Klick zum Springen. Drei Frequenzbänder in Abstufungen der Deckfarbe. Gezeichnet wird nur,
+  solange ein Deck spielt; im Stand kostet das nichts. Eine aufs Deck gezogene Datei landet in
+  der Library, ihre Analyse wird vorgezogen.
+- **Restzeit-Warnung** — in den letzten 30 Sekunden wird die Restzeit rot und pulsiert (ruhig
+  bei reduzierter Bewegung).
 - **Cue nach Pioneer-Art** — pausiert: Cue-Punkt setzen; auf dem Cue-Punkt halten = vorhören,
   loslassen = zurück; Play beim Halten = weiterspielen; spielend: zurück zum Cue und Pause.
   Shift + Cue springt an den Anfang.
@@ -147,7 +153,7 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
 - **„Über rille“** — Version, Spenden- und Bewerten-Button, Link zum Quellcode; externe Links
   dürfen nur die freigegebenen Adressen öffnen.
 
-**Als Nächstes** — Waveforms (M6), Sync, Hot Cues, Loops und Pads
+**Als Nächstes** — Sync, Hot Cues, Loops und Pads
 (M7), Vorhören im Kopfhörer (M8). Siehe [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
@@ -205,6 +211,8 @@ Alles funktioniert auch ohne Controller:
 | Aktion | So geht's |
 |---|---|
 | Track laden | Audiodatei aus dem Finder auf ein Deck ziehen, oder eine Library-Zeile (ziehen, Doppelklick) |
+| Springen | In die Übersichts-Waveform unter der Zeit klicken |
+| Waveform-Zoom | Mausrad über der Detail-Waveform, oder sie fokussieren und + / − drücken |
 | Musik importieren | „Ordner importieren“, oder einen Ordner auf die Library ziehen |
 | Library | Suchfeld (↓ / Enter springt in die Liste); in der Liste ↑ ↓, Bild ↑ ↓, Pos1 / Ende; Enter = erstes leeres Deck, `1` / `2` = Deck 1 / 2; Spaltenkopf klicken sortiert |
 | Play/Pause, Cue | Klicken, oder Knopf fokussieren und Leertaste / Enter (Cue: halten = vorhören) |
@@ -346,8 +354,8 @@ CI committet neue Zahlen, sobald sie sich ändern.
 | Allokations-Wächter | `crates/rille-engine/tests/no_alloc.rs` | 2.000 Blöcke unter `assert_no_alloc` inkl. Tempo, Keylock, Scratch und Reverse, plus Gegenprobe mit absichtlicher Allokation |
 | C++-Allokations-Wächter | `crates/rille-engine/tests/stretch_alloc.rs` | Signalsmith Stretch `process`/`reset`/`seek` bei wechselnden Raten über den `malloc_logger`-Haken, mit Gegenprobe |
 | CoreMIDI-Rundweg | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtueller DDJ-200 → Port → Decoder → Aktion, und LEDs zurück |
-| Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | Library-Suche/-Sortierung/-Auswahl, Store und Lade-Rennen, Positions-Fortschreibung, Token-Gleichstand und Kontrast, „keine Rohwerte“-Wächter |
-| E2E (Playwright) | `e2e/` | Library-Import mit Fortschritt, virtualisierte Liste, Suche, Sortierung, Laden per Tastatur, Ziehen aufs Deck, Laden, Play, Cue, Auswerfen, Tastaturbedienung, Fader, Tempo-Bereich und -Anzeige, Keylock, Reverse und Bend beim Halten, Layout bei 1024×680, Einstellungen, Controller-UI — gegen das Mock-Backend |
+| Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | Peaks-Format (bytegleich mit Rust), Zoomstufen-Wahl, Beat-Positionen, Library-Suche/-Sortierung/-Auswahl, Store und Lade-Rennen, Positions-Fortschreibung, Token-Gleichstand und Kontrast, „keine Rohwerte“-Wächter |
+| E2E (Playwright) | `e2e/` | Waveforms gezeichnet (am Screenshot geprüft), kein Zeichnen im Leerlauf, Klick-zum-Springen, Zoom, Restzeit-Warnung mit und ohne reduzierte Bewegung, Library-Import mit Fortschritt, virtualisierte Liste, Suche, Sortierung, Laden per Tastatur, Ziehen aufs Deck, Laden, Play, Cue, Auswerfen, Tastaturbedienung, Fader, Tempo-Bereich und -Anzeige, Keylock, Reverse und Bend beim Halten, Layout bei 1024×680, Einstellungen, Controller-UI — gegen das Mock-Backend |
 
 Praxis: Clippy mit `-D warnings`, `unwrap`/`expect`/`panic` außerhalb von Tests verboten, neue
 Wächter werden per Mutationsprobe geprüft (einmal gegen absichtlich kaputten Code laufen lassen,
@@ -386,7 +394,7 @@ rille/
 | M3 | Isolator-EQ mit Kill, bipolares Filter, Transition-FX (Echo-Out, Filter-Out) | ✅ |
 | M4 | Tempo-Bereiche, Keylock (Signalsmith Stretch), Pitch-Bend, Scratch, Reverse | ✅ (Jog-Kalibrierung bei der Hardware-Abnahme) |
 | M5 | Library: Import, SQLite, BPM-/Beatgrid-Analyse, Suche, Drag & Drop | ✅ |
-| M6 | Waveforms (Übersicht + scrollende Detailansicht, Frequenzfarben), Deck-Oberfläche | ⏳ |
+| M6 | Waveforms (Übersicht + scrollende Detailansicht, Frequenzfarben), Deck-Oberfläche | ✅ |
 | M7 | Sync & Sync-Lock, Hot Cues, Beat Loops, Beat Jump, Pad-Modi | ⏳ |
 | M8 | Vorhören über ein zweites Gerät oder ein 4-Kanal-Interface | ⏳ |
 | M9 | Vollständige Tastatursteuerung, helles Theme, Leerzustände, gemessene Budgets | ⏳ |

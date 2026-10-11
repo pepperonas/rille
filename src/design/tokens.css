@@ -94,6 +94,8 @@
   --size-switch-width: 52px;
   --size-switch-height: 32px;
   --size-library-row: 36px;
+  --size-overview: 40px;
+  --size-detail-min: 72px;
   --size-library-bpm: 72px;
   --size-library-time: 64px;
   --size-library-status: 28px;

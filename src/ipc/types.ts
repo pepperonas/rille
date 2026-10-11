@@ -79,6 +79,8 @@ export interface DeckLoaded {
   artist: string | null;
   /** From the library analysis; null if unknown. */
   bpm: number | null;
+  /** Library row (waveform, beatgrid); null when the library is unavailable. */
+  libraryId: number | null;
   durationSecs: number;
 }
 
@@ -95,6 +97,8 @@ export interface LibraryTrack {
   duration: number | null;
   /** null: not analysed yet, or no clear tempo. */
   bpm: number | null;
+  /** Seconds to the first beat; with `bpm` the beatgrid. */
+  firstBeat: number | null;
   analysis: AnalysisState;
   error: string | null;
 }
@@ -202,6 +206,8 @@ export interface Backend {
   loadTrack(deck: Deck, id: number): Promise<number>;
   libraryTracks(): Promise<LibraryTrack[]>;
   libraryProgress(): Promise<LibraryProgress>;
+  /** Waveform peaks ("RLPK" v1); rejects while the analysis is still running. */
+  libraryPeaks(id: number): Promise<ArrayBuffer>;
   /** Import dropped folders or files in the background. */
   libraryImport(paths: string[]): Promise<void>;
   /** Native folder picker, then import. */

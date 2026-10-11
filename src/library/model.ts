@@ -173,3 +173,16 @@ export function formatDuration(secs: number | null): string {
 export function formatBpm(bpm: number | null): string {
   return bpm === null ? '–' : bpm.toFixed(1);
 }
+
+const indexes = new WeakMap<LibraryTrack[], Map<number, LibraryTrack>>();
+
+/** Track by id without scanning the list on every frame (one index per list version). */
+export function trackById(tracks: LibraryTrack[], id: number | null): LibraryTrack | undefined {
+  if (id === null) return undefined;
+  let index = indexes.get(tracks);
+  if (!index) {
+    index = new Map(tracks.map((t) => [t.id, t]));
+    indexes.set(tracks, index);
+  }
+  return index.get(id);
+}

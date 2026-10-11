@@ -51,6 +51,7 @@ pub fn run() {
             commands::deck_load_file,
             commands::deck_load_track,
             commands::library_tracks,
+            commands::library_peaks,
             commands::library_progress,
             commands::library_import,
             commands::library_choose_folder,

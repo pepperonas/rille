@@ -82,6 +82,11 @@ Das Frontend rechnet nichts Audio-Relevantes.
   der erste Abruf beim Start wird *unter* die Ereignisse gemischt (`mergeUnder`), nie darüber.
 - Ein Track, der während seiner Analyse erneut importiert wird, läuft danach noch einmal
   (`Queue::rerun`) – sonst bliebe das Ergebnis der alten Datei stehen.
+- **Waveforms:** Farben kommen aus `--wave-*` im Deck (CSS) und werden über einen 1×1-Canvas in
+  RGB übersetzt (`waveform/colors.ts`) – nie Farbstrings selbst zerlegen. Die Detailansicht ist
+  WebGL2 ohne `preserveDrawingBuffer`: zurücklesen geht nur über einen Screenshot
+  (siehe `e2e/waveform.spec.ts`). `window.__rilleWaveDraws` zählt Zeichnungen (nur Dev) für den
+  Leerlauf-Test.
 - BPM: lieber „kein Tempo“ als ein geratenes. Neue Heuristiken immer gegen Rauschen und
   Zufallsschläge prüfen (`bpm.rs`-Tests) und mit `examples/analyze` auf echten Tracks.
 - **CoreMIDI sieht neue Geräte nur, wenn der erste MIDI-Client des Prozesses auf einem Thread

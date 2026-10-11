@@ -55,6 +55,8 @@ pub struct TrackMeta {
     pub title: String,
     pub artist: Option<String>,
     pub bpm: Option<f64>,
+    /// Library row, for the waveform and the beatgrid.
+    pub library_id: Option<i64>,
 }
 
 impl TrackMeta {
@@ -63,6 +65,7 @@ impl TrackMeta {
             title: title_from_path(path),
             artist: None,
             bpm: None,
+            library_id: None,
         }
     }
 }
@@ -355,6 +358,7 @@ impl AudioService {
                     title,
                     artist: request.meta.artist.clone(),
                     bpm: request.meta.bpm,
+                    library_id: request.meta.library_id,
                     duration_secs,
                 }));
                 // A newer load or an unload on this deck stops the decode; what is decoded stays.

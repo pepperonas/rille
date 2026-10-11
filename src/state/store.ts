@@ -8,6 +8,7 @@ import type {
   StateFrame,
 } from '../ipc/types';
 import { initialLibrary, type LibraryState } from '../library/model';
+import { DEFAULT_ZOOM } from '../waveform/peaks';
 
 export type DeckInfo =
   | { status: 'empty' }
@@ -24,6 +25,7 @@ export type DeckInfo =
       title: string;
       artist: string | null;
       bpm: number | null;
+      libraryId: number | null;
       durationSecs: number;
       /** Plays, but not all of the file could be decoded. */
       warning: string | null;
@@ -38,6 +40,8 @@ export interface AppState {
   audio: AudioStatus | null;
   controller: ControllerStatus | null;
   library: LibraryState;
+  /** Detail waveform zoom step (`ZOOM_SECONDS`), shared by both decks. */
+  waveZoom: number;
 }
 
 export const initialState: AppState = {
@@ -47,6 +51,7 @@ export const initialState: AppState = {
   audio: null,
   controller: null,
   library: initialLibrary,
+  waveZoom: DEFAULT_ZOOM,
 };
 
 // Pure transitions, unit-tested.
@@ -91,6 +96,7 @@ export function loaded(s: AppState, e: DeckLoaded): AppState {
     title: e.title,
     artist: e.artist ?? null,
     bpm: e.bpm ?? null,
+    libraryId: e.libraryId ?? null,
     durationSecs: e.durationSecs,
     warning: null,
   };

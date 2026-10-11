@@ -22,17 +22,19 @@
   color: var(--accent);
 }
 
-.progress {
-  --progress: 0;
-  height: var(--size-fader-rail);
-  border-radius: var(--shape-full);
-  background: var(--md-surface-container-highest);
-  overflow: hidden;
+.readout[data-warn='true'] .remaining {
+  color: var(--md-error);
+  animation: warn 1s var(--motion-easing-effects) infinite alternate;
 }
 
-.progressFill {
-  height: 100%;
-  width: calc(var(--progress) * 100%);
-  background: var(--accent);
-  border-radius: inherit;
+@keyframes warn {
+  to {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .readout[data-warn='true'] .remaining {
+    animation: none;
+  }
 }

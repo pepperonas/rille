@@ -304,6 +304,15 @@ impl Library {
         Ok(())
     }
 
+    /// Analyse again (e.g. its cached peaks went missing).
+    pub fn set_pending(&self, id: i64) -> Result<(), DbError> {
+        self.conn.execute(
+            "UPDATE tracks SET analysis = 'pending', error = NULL WHERE id = ?1",
+            params![id],
+        )?;
+        Ok(())
+    }
+
     pub fn set_failed(&self, id: i64, error: &str) -> Result<(), DbError> {
         self.conn.execute(
             "UPDATE tracks SET analysis = ?2, error = ?3 WHERE id = ?1",

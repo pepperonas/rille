@@ -14,6 +14,7 @@ import type {
   StateFrame,
 } from './types';
 import { NEXT_RANGE, RANGE_SPAN } from '../state/extrapolate';
+import { encodePeaks, syntheticPeaks } from '../waveform/peaks';
 
 const RATE = 48_000;
 const BANDS: Band[] = ['low', 'mid', 'high'];
@@ -84,6 +85,7 @@ export function fakeTracks(from: number, count: number, analyzed: boolean): Libr
       album: null,
       duration: 180 + ((n * 37) % 240),
       bpm: analyzed ? fakeBpm(n) : null,
+      firstBeat: analyzed && fakeBpm(n) !== null ? 0.05 + (n % 7) * 0.031 : null,
       analysis: analyzed ? 'done' : 'pending',
       error: null,
     };
@@ -161,7 +163,13 @@ export function createMockBackend(): Backend {
       added.forEach((t, i) =>
         setTimeout(
           () => {
-            const done: LibraryTrack = { ...t, analysis: 'done', bpm: fakeBpm(t.id) };
+            const bpm = fakeBpm(t.id);
+            const done: LibraryTrack = {
+              ...t,
+              analysis: 'done',
+              bpm,
+              firstBeat: bpm === null ? null : 0.05,
+            };
             library = library.map((x) => (x.id === t.id ? done : x));
             progress.analyzed += 1;
             emit('library-tracks', [done]);
@@ -410,6 +418,7 @@ export function createMockBackend(): Backend {
     artist: string | null,
     bpm: number | null,
     durationSecs: number,
+    libraryId: number | null,
   ): number => {
     const id = nextId++;
     const d = decks[idx(deck)];
@@ -435,7 +444,7 @@ export function createMockBackend(): Backend {
       }
     }
     setTimeout(
-      () => emit('deck-loaded', { deck, trackId: id, title, artist, bpm, durationSecs }),
+      () => emit('deck-loaded', { deck, trackId: id, title, artist, bpm, libraryId, durationSecs }),
       50,
     );
     return id;
@@ -488,13 +497,20 @@ export function createMockBackend(): Backend {
     async libraryImport(paths) {
       simulateImport(Math.max(1, paths.length) * 4);
     },
+    async libraryPeaks(id) {
+      const t = library.find((x) => x.id === id);
+      if (!t || t.analysis !== 'done') throw new Error('Waveform wird berechnet');
+      return encodePeaks(
+        syntheticPeaks(t.duration ?? TRACK_SECONDS, t.bpm ?? 120, id, t.firstBeat ?? 0),
+      );
+    },
     async libraryChooseFolder() {
       simulateImport(12);
     },
     async loadTrack(deck, id) {
       const t = library.find((x) => x.id === id);
       if (!t) throw new Error('Dieser Track ist nicht mehr in der Library');
-      return load(deck, t.title, t.artist, t.bpm, t.duration ?? TRACK_SECONDS);
+      return load(deck, t.title, t.artist, t.bpm, t.duration ?? TRACK_SECONDS, t.id);
     },
     async loadFile(deck, path) {
       const title =
@@ -502,8 +518,26 @@ export function createMockBackend(): Backend {
           .split('/')
           .pop()
           ?.replace(/\.[^.]+$/, '') ?? 'Unbenannt';
-      const preset = demo ? DEMO_TRACKS[title] : undefined;
-      return load(deck, title, preset?.[2] ?? null, preset?.[3] ?? null, TRACK_SECONDS);
+      // As in the app, a dropped file joins the library (here: analysed at once).
+      let t = library.find((x) => x.path === path);
+      if (!t) {
+        const preset = demo ? DEMO_TRACKS[title] : undefined;
+        t = {
+          id: library.reduce((m, x) => Math.max(m, x.id), 0) + 1,
+          path,
+          title,
+          artist: preset?.[2] ?? null,
+          album: null,
+          duration: TRACK_SECONDS,
+          bpm: preset?.[3] ?? 124,
+          firstBeat: 0.12,
+          analysis: 'done',
+          error: null,
+        };
+        library = [...library, t];
+        emit('library-tracks', [t]);
+      }
+      return load(deck, t.title, t.artist, t.bpm, t.duration ?? TRACK_SECONDS, t.id);
     },
     async controllerStatus() {
       return { ...controller };
