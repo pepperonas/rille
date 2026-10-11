@@ -1,0 +1,33 @@
+.notice {
+  position: absolute;
+  inset: var(--space-2) var(--space-2) auto;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  justify-content: space-between;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--shape-lg);
+  background: var(--md-error-container);
+  color: var(--md-on-error-container);
+  font: var(--type-body-m);
+}
+
+.text strong {
+  font-weight: 700;
+}
+
+.button {
+  flex: none;
+  border: 0;
+  border-radius: var(--shape-full);
+  padding: var(--space-2) var(--space-4);
+  background: var(--md-error);
+  color: var(--md-on-error);
+  font: var(--type-label-l);
+  cursor: pointer;
+}
+
+.button:hover {
+  background: color-mix(in srgb, var(--md-on-error) calc(var(--state-hover) * 100%), var(--md-error));
+}

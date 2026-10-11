@@ -3,6 +3,8 @@ import { MidiMonitor } from '../dev/MidiMonitor';
 import { SettingsDialog } from '../settings/SettingsDialog';
 import { useAppState } from '../state/store';
 import { AboutDialog } from './AboutDialog';
+import { registerDialog } from './dialogs';
+import { ShortcutsDialog } from './ShortcutsDialog';
 import styles from './Titlebar.module.css';
 
 /** Title bar overlay: the native traffic lights sit on top-left, the rest is a drag region. */
@@ -11,29 +13,32 @@ export function Titlebar() {
   const settings = useRef<HTMLDialogElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const monitor = useRef<HTMLDialogElement>(null);
+  const shortcuts = useRef<HTMLDialogElement>(null);
   const [monitorOpen, setMonitorOpen] = useState(false);
   const audio = useAppState((s) => s.audio);
   const controller = useAppState((s) => s.controller);
   const openSettings = () => {
-    settings.current?.showModal();
+    if (!settings.current?.open) settings.current?.showModal();
     setSettingsOpen(true);
   };
   const openMonitor = () => {
     settings.current?.close();
-    monitor.current?.showModal();
+    if (!monitor.current?.open) monitor.current?.showModal();
     setMonitorOpen(true);
   };
 
-  // ⌘⌥M opens the MIDI monitor from anywhere.
+  const openShortcuts = () => {
+    if (!shortcuts.current?.open) shortcuts.current?.showModal();
+  };
+
+  // Shortcuts and empty states open these dialogs by name.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.metaKey && e.altKey && e.code === 'KeyM') {
-        e.preventDefault();
-        openMonitor();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    const offs = [
+      registerDialog('settings', openSettings),
+      registerDialog('monitor', openMonitor),
+      registerDialog('shortcuts', openShortcuts),
+    ];
+    return () => offs.forEach((off) => off());
   }, []);
 
   return (
@@ -68,6 +73,20 @@ export function Titlebar() {
       <button
         type="button"
         className={styles.iconButton}
+        aria-label="Tastenkürzel"
+        title="Tastenkürzel (?)"
+        onClick={openShortcuts}
+      >
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+          <path
+            fill="currentColor"
+            d="M4 5h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm0 2v10h16V7H4Zm2 2h2v2H6V9Zm3 0h2v2H9V9Zm3 0h2v2h-2V9Zm3 0h3v2h-3V9ZM6 12h2v2H6v-2Zm3 0h6v2H9v-2Zm7 0h2v2h-2v-2Z"
+          />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className={styles.iconButton}
         aria-label="Einstellungen"
         onClick={openSettings}
       >
@@ -92,6 +111,7 @@ export function Titlebar() {
         </svg>
       </button>
       <AboutDialog ref={about} />
+      <ShortcutsDialog ref={shortcuts} />
       <SettingsDialog
         ref={settings}
         open={settingsOpen}

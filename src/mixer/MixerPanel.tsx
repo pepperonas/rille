@@ -1,3 +1,4 @@
+import { setPrefs } from '../settings/applyPrefs';
 import { backend } from '../ipc';
 import type { Band, Curve, Deck } from '../ipc/types';
 import { Fader } from '../components/Fader';
@@ -265,7 +266,7 @@ export function MixerPanel() {
               aria-checked={curve === c.value}
               title={c.hint}
               className={styles.chip}
-              onClick={() => backend.mixer({ type: 'curve', curve: c.value })}
+              onClick={() => setPrefs({ curve: c.value })}
             >
               {c.label}
             </button>

@@ -7,6 +7,12 @@ All notable changes to rille are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- M9 polish: global keyboard shortcuts for both decks and the mixer (physical keys, so QWERTZ
+  and QWERTY match; held cue and bend let go when the window loses focus; quiet while typing or
+  in dialogs) and a `?` overview generated from the same table. Light theme and "follow the
+  system", applied to the native window too; start tempo range and crossfader curve as saved
+  preferences. A notice when no output device is open. Performance protocol with every budget
+  measured (`docs/performance.md`), plus `examples/midi_latency.rs` and `tools/perf-ui.mjs`.
 - M8 headphones: pre-fader cue per channel, master cue, cue/master blend and level (all
   smoothed); routed to outputs 3/4 of the main device or to a second device through a
   lock-free ring with drift compensation (P controller on the ring fill, cubic resampling).
@@ -69,6 +75,7 @@ All notable changes to rille are documented here. The format follows
 - Track loading no longer decodes the whole file first (was ~360 ms for a 3:43 MP3).
 
 ### Fixed
+- Tap tempo lost a tap when two came before the next render.
 - Headphones (review of M8): switching the headphones or a setting while nothing plays now
   reaches the app (the frame filter compared fields one by one and also missed EQ, kill,
   filter and transition changes since M3 – it now compares the whole state); a device switch

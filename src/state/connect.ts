@@ -14,6 +14,7 @@ import {
 } from './store';
 import { importPaths, libraryError, loadSelected, moveSelected } from '../library/actions';
 import { mergeTracks, mergeUnder } from '../library/model';
+import { initPrefs } from '../settings/applyPrefs';
 
 /** Wire backend streams into the store. Returns a cleanup function. */
 export async function connectBackend(): Promise<() => void> {
@@ -79,7 +80,11 @@ export async function connectBackend(): Promise<() => void> {
     void loadIntoDeck('a', '/demo/Deep Hours (Extended Mix).wav');
     void loadIntoDeck('b', '/demo/Neon Avenue (Club Edit).wav');
   }
-  return () => offs.forEach((off) => off());
+  const offPrefs = initPrefs();
+  return () => {
+    offPrefs();
+    offs.forEach((off) => off());
+  };
 }
 
 export async function loadIntoDeck(deck: Deck, path: string): Promise<void> {

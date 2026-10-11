@@ -56,6 +56,7 @@ export function LibraryPanel() {
         )}
         <span className={styles.spacer} />
         <input
+          id="library-search"
           className={styles.search}
           type="search"
           placeholder="Suchen: Titel, Artist, Album, BPM"

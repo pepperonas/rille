@@ -1,6 +1,7 @@
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { openUrl } from '@tauri-apps/plugin-opener';
 import type { Backend, StateFrame } from './types';
 
@@ -54,6 +55,7 @@ export const tauriBackend: Backend = {
   setGrid: (id, bpm, firstBeat) => invoke('library_set_grid', { id, bpm, firstBeat }),
   setMidiMonitor: (on) => invoke('midi_monitor', { on }),
   openExternal: (url) => openUrl(url),
+  setWindowTheme: (theme) => getCurrentWindow().setTheme(theme),
   deck: (deck, action) => fire('deck_command', { deck, action }),
   mixer: (action) => fire('mixer_command', { action }),
 };

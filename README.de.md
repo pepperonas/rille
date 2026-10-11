@@ -84,6 +84,11 @@
 | <img src="docs/screenshots/empty.png" alt="Leere Decks und Library erklären den nächsten Schritt" width="100%"> | <img src="docs/screenshots/settings.png" alt="Einstellungen: Ausgabegerät, Puffer, Latenz, Aussetzer, Controller, Vinyl-Modus" width="100%"> | <img src="docs/screenshots/midi-monitor.png" alt="MIDI-Monitor mit dekodierten Controller-Nachrichten" width="100%"> |
 | Leerzustände sagen, was als Nächstes zu tun ist | Gerät, Puffer, Latenz, Aussetzer, Controller | Jede MIDI-Nachricht, dekodiert, live (⌘⌥M) |
 
+| Helles Theme | Tastenkürzel |
+|:---:|:---:|
+| <img src="docs/screenshots/light.png" alt="Dieselben zwei Decks im hellen Theme" width="100%"> | <img src="docs/screenshots/shortcuts.png" alt="Kürzel-Übersicht, geöffnet mit ?" width="100%"> |
+| Dunkel, hell oder wie das System (Einstellungen) | `?` zeigt jede Taste; dieselbe Tabelle steuert den Handler |
+
 <sub>Die Screenshots entstehen aus der Browser-Demo (`pnpm screenshots`) und sind damit ohne
 Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</sub>
 
@@ -173,7 +178,15 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
   Takt; rille folgt ihm (±200 ppm ohne Aussetzer, die Geschwindigkeitskorrektur bleibt unter
   0,06 %), und wird es abgezogen, spielt der Master weiter.
 
-**Als Nächstes** — Feinschliff und Abnahme (M9). Siehe [Roadmap](#%EF%B8%8F-roadmap).
+- **Tastatur zuerst** — jede Deck- und Mixer-Funktion hat eine Taste (auf QWERTZ und QWERTY
+  dieselben physischen Tasten); `?` zeigt alle, erzeugt aus der Tabelle, die auch der Handler
+  nutzt. Gehaltene Tasten (Cue, Bend) lassen los, sobald das Fenster den Fokus verliert.
+- **Hell und dunkel** — dunkel als Standard, hell oder wie macOS; das native Fenster zieht mit.
+  Tempo-Bereich beim Start und Crossfader-Kurve bleiben gespeichert.
+- **Leerzustände** — kein Ausgabegerät, kein Controller, keine Tracks: jeweils mit dem nächsten
+  Schritt.
+
+**Als Nächstes** — Hardware-Abnahme mit dem DDJ-200. Siehe [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
 
@@ -252,7 +265,30 @@ Alles funktioniert auch ohne Controller:
 | Einstellungen | ⚙︎ in der Titelleiste oder Klick auf den Audio-/Controller-Status |
 | MIDI-Monitor | ⌘⌥M |
 
-Globale Tastenkürzel für die Decks (und eine Übersicht per `?`) kommen mit M9.
+### Tastenkürzel
+
+Die Tasten liegen auf QWERTZ und QWERTY an derselben Stelle (Y und Z bleiben frei). `?` zeigt
+dieselbe Liste in der App. Solange ein Textfeld oder ein Dialog den Fokus hat, ruhen die Kürzel.
+
+| Deck 1 | Deck 2 | Funktion |
+|---|---|---|
+| `F` | `J` | Play / Pause |
+| `D` | `K` | Cue (halten = Vorhören) |
+| `S / ⇧S` | `L / ⇧L` | Sync · mit ⇧ Sync-Lock an/aus |
+| `G` | `H` | Kopfhörer-Cue an/aus |
+| `1 2 3 4 Q W E R` | `7 8 9 0 U I O P` | Pads 1–8 im gewählten Modus · mit ⇧ löschen / Loop verlassen |
+| `5` | `6` | Nächster Pad-Modus (Hot Cue → Loop → Jump) |
+| `X / C` | `M / ,` | Pitch-Bend langsamer / schneller (halten) |
+
+| Tasten | Funktion |
+|---|---|
+| `V / N` | Crossfader nach links / rechts · mit ⇧ ganz |
+| `B` | Crossfader in die Mitte |
+| `?` | Übersicht aller Kürzel |
+| `⌘F` | Library durchsuchen |
+| `⌘L` | Trackliste (dort Enter, `1` / `2` laden) |
+| `⌘,` | Einstellungen |
+| `⌘⌥M` | MIDI-Monitor |
 
 ## 🚀 Loslegen
 
@@ -274,6 +310,7 @@ pnpm tauri dev        # App bauen und starten
 | `pnpm e2e` | Playwright-Tests gegen das simulierte Backend (nutzt das installierte Chrome) |
 | `pnpm badges` | Die Zahlen im README neu berechnen (`.github/badges/*.json`) |
 | `pnpm screenshots` | `docs/screenshots/*` und `docs/banner.png` neu rendern |
+| `pnpm perf:ui` | Bildzeiten der Oberfläche messen (zwei spielende Decks, dann Stand) |
 | `pnpm tokens` | Farb-Tokens nach Änderung einer Seed-Farbe neu erzeugen |
 | `pnpm tauri build` | `rille.app` / `.dmg` bauen (vorerst unsigniert) |
 
@@ -354,17 +391,22 @@ pnpm tauri dev        # App bauen und starten
 
 ## 📏 Performance
 
-| Budget | Ziel | Bisher gemessen |
+Gemessen auf einem M1 Pro, Release-Builds, bei starker Fremdlast (Load Average 14–17).
+Vollständiges Protokoll mit allen Befehlen: [`docs/performance.md`](docs/performance.md).
+
+| Budget | Ziel | Gemessen |
 |---|---|---|
-| Puffer | 256 Frames @ 48 kHz ohne Aussetzer | 256 Frames fest, 0 Aussetzer (MacBook, Leerlauf) |
-| Ausgabelatenz | — | 5,3 ms (Puffer + Gerät) |
-| CPU im Leerlauf | minimal | 0,2 % (Debug-Build, nichts spielt) |
-| Zwei Decks rendern, Keylock aus / an | — | im Mittel 0,4 % / 1,9 % eines Kerns (Release, `examples/bench_keylock.rs`) |
-| Langsamster Block mit Keylock (Spektralarbeit kommt stoßweise) | innerhalb der Blockzeit | 566 µs: 11 % eines 256-Frame-Blocks, 41 % eines 64-Frame-Blocks |
-| Track laden | < 300 ms | nach ~4 ms spielbar (progressives Dekodieren; vollständig bei einer 4:18-MP3: 450 ms) |
-| Analyse eines 8-Minuten-Tracks | im Hintergrund | ~1,5 s auf einem Worker (Release), Speicher bleibt flach (gestreamt) |
-| Abspielen während die Library analysiert | kein Block über Budget | zwei Decks mit Keylock in Echtzeit-Priorität, 8 Analyse-Worker: 0 von 5.625 Blöcken über Budget, langsamster 25–29 % von 5,3 ms (`examples/load_test.rs`, 30 s, bei starker Fremdlast) |
-| Controller → hörbar | < 10 ms (ohne Gerätelatenz) | ein Audioblock (≤ 5,3 ms) + MIDI |
+| Puffer | 256 Frames @ 48 kHz ohne Aussetzer | 0 von 5.625 Blöcken über Budget (zwei Decks mit Keylock, 30 s); langsamster 64 % von 5,3 ms |
+| Abspielen während die Library analysiert | kein Block über Budget | 8 Worker, 797 Analysen in 30 s: 0 über Budget, langsamster 16 % |
+| Engine, Keylock aus / an | gering | 0,4 % / 2,0 % eines Kerns im Mittel |
+| Langsamster Block mit Keylock | innerhalb der Blockzeit | 692 µs = 13 % bei 256 Frames, 61 % bei 64 |
+| Track laden | < 300 ms bis spielbar | spielbar nach 1–2 ms, erste Sekunde nach 4 ms; vollständig dekodiert (6:50-MP3) nach 720 ms im Hintergrund |
+| Analyse | im Hintergrund | 0,96 s für eine 6:50-MP3 auf einem Kern |
+| Controller → hörbar | < 10 ms (ohne Gerätelatenz) | MIDI bis Aktion: Median 43 µs, p99 83 µs; plus höchstens ein Block (5,3 ms) |
+| Oberfläche, zwei Decks spielen | flüssig | 60 fps (Headless-Grenze), p99-Bildabstand 16,8 ms, 0 Long Tasks |
+| Oberfläche im Stand | nichts zeichnen | 0 Waveform-Zeichnungen pro Sekunde |
+| App im Leerlauf | minimal | 0,0–0,8 % eines Kerns (Release, Ausgabe offen) |
+| Speicher je Track | vertretbar | 23 MB je Minute (48 kHz Stereo f32) |
 
 ## 🧪 Tests
 
@@ -378,7 +420,7 @@ CI committet neue Zahlen, sobald sie sich ändern.
 | C++-Allokations-Wächter | `crates/rille-engine/tests/stretch_alloc.rs` | Signalsmith Stretch `process`/`reset`/`seek` bei wechselnden Raten über den `malloc_logger`-Haken, mit Gegenprobe |
 | CoreMIDI-Rundweg | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtueller DDJ-200 → Port → Decoder → Aktion, und LEDs zurück |
 | Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | Peaks-Format (bytegleich mit Rust), Zoomstufen-Wahl, Beat-Positionen, Library-Suche/-Sortierung/-Auswahl, Store und Lade-Rennen, Positions-Fortschreibung, Token-Gleichstand und Kontrast, „keine Rohwerte“-Wächter |
-| E2E (Playwright) | `e2e/` | Hot Cues, Loops, Beat Jump, Sync und Lock, Grid-Editor und Tap, Decks passen bei 1024×680–1440×900 über die Library, Waveforms gezeichnet (am Screenshot geprüft), kein Zeichnen im Leerlauf, Klick-zum-Springen, Zoom, Restzeit-Warnung mit und ohne reduzierte Bewegung, Library-Import mit Fortschritt, virtualisierte Liste, Suche, Sortierung, Laden per Tastatur, Ziehen aufs Deck, Laden, Play, Cue, Auswerfen, Tastaturbedienung, Fader, Tempo-Bereich und -Anzeige, Keylock, Reverse und Bend beim Halten, Layout bei 1024×680, Einstellungen, Controller-UI — gegen das Mock-Backend |
+| E2E (Playwright) | `e2e/` | Tastenkürzel (Deck, Pads, Crossfader, gehaltene Tasten lassen beim Fokusverlust los, Ruhe beim Tippen und in Dialogen, Listentasten treffen keine Pads), helles / System-Theme und gespeicherte Einstellungen, Hinweis ohne Gerät, Hot Cues, Loops, Beat Jump, Sync und Lock, Grid-Editor und Tap, Decks passen bei 1024×680–1440×900 über die Library, Waveforms gezeichnet (am Screenshot geprüft), kein Zeichnen im Leerlauf, Klick-zum-Springen, Zoom, Restzeit-Warnung mit und ohne reduzierte Bewegung, Library-Import mit Fortschritt, virtualisierte Liste, Suche, Sortierung, Laden per Tastatur, Ziehen aufs Deck, Laden, Play, Cue, Auswerfen, Tastaturbedienung, Fader, Tempo-Bereich und -Anzeige, Keylock, Reverse und Bend beim Halten, Layout bei 1024×680, Einstellungen, Controller-UI — gegen das Mock-Backend |
 
 Praxis: Clippy mit `-D warnings`, `unwrap`/`expect`/`panic` außerhalb von Tests verboten, neue
 Wächter werden per Mutationsprobe geprüft (einmal gegen absichtlich kaputten Code laufen lassen,
@@ -420,7 +462,7 @@ rille/
 | M6 | Waveforms (Übersicht + scrollende Detailansicht, Frequenzfarben), Deck-Oberfläche | ✅ |
 | M7 | Sync & Sync-Lock, Hot Cues, Beat Loops, Beat Jump, Pad-Modi | ✅ (Hardware-Abnahme offen) |
 | M8 | Vorhören über ein zweites Gerät oder ein 4-Kanal-Interface | ✅ (Hardware-Abnahme offen) |
-| M9 | Vollständige Tastatursteuerung, helles Theme, Leerzustände, gemessene Budgets | ⏳ |
+| M9 | Vollständige Tastatursteuerung, helles Theme, Leerzustände, gemessene Budgets | ✅ |
 
 Später: Tonart-Erkennung, weitere Effekte, Aufnahme, Sampler-Pads.
 

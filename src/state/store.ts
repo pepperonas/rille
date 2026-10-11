@@ -10,6 +10,7 @@ import type {
 } from '../ipc/types';
 import { initialLibrary, type LibraryState } from '../library/model';
 import { DEFAULT_ZOOM } from '../waveform/peaks';
+import { DEFAULT_PREFS, type Prefs } from '../settings/prefs';
 
 export type DeckInfo =
   | { status: 'empty' }
@@ -45,6 +46,8 @@ export interface AppState {
   waveZoom: number;
   /** What the pads of each deck do (app and controller alike). */
   padMode: Record<Deck, PadMode>;
+  /** Saved user preferences (theme, start tempo range, crossfader curve). */
+  prefs: Prefs;
 }
 
 export const initialState: AppState = {
@@ -56,6 +59,7 @@ export const initialState: AppState = {
   library: initialLibrary,
   waveZoom: DEFAULT_ZOOM,
   padMode: { a: 'hotCue', b: 'hotCue' },
+  prefs: DEFAULT_PREFS,
 };
 
 // Pure transitions, unit-tested.

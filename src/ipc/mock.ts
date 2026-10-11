@@ -152,10 +152,13 @@ export function createMockBackend(): Backend {
     name: demo ? 'DDJ-200' : (null as string | null),
     vinylMode: true,
   };
+  // `?noaudio`: start without an output device (empty-state tests); choosing one connects.
+  const noAudio =
+    typeof location !== 'undefined' && new URLSearchParams(location.search).has('noaudio');
   let onFrame: ((f: StateFrame) => void) | null = null;
   const listeners = new Map<string, Set<(p: unknown) => void>>();
   const status: AudioStatus = {
-    connected: true,
+    connected: !noAudio,
     deviceId: 'mock',
     deviceName: demo ? 'MacBook Pro-Lautsprecher' : 'Browser (Simulation)',
     sampleRate: RATE,
@@ -164,7 +167,7 @@ export function createMockBackend(): Backend {
     bufferFrames: 256,
     latencyMs: 5.3,
     deviceXruns: 0,
-    error: null,
+    error: noAudio ? 'Das Ausgabegerät ist nicht mehr da.' : null,
     cue: {
       setting: { kind: 'off' },
       active: false,
@@ -674,6 +677,8 @@ export function createMockBackend(): Backend {
       return { ...status, cue: { ...status.cue } };
     },
     async audioOpen(_deviceId, bufferFrames) {
+      status.connected = true;
+      status.error = null;
       status.requestedBuffer = bufferFrames;
       status.bufferFrames = bufferFrames;
       status.latencyMs = (bufferFrames / RATE) * 1000;
@@ -767,6 +772,10 @@ export function createMockBackend(): Backend {
     },
     async openExternal(url) {
       window.open(url, '_blank', 'noopener');
+    },
+    async setWindowTheme(theme) {
+      // Visible to the browser tests; there is no native window here.
+      document.documentElement.dataset.windowTheme = theme ?? 'system';
     },
     deck(deck, action) {
       deckAction(decks[idx(deck)], action);

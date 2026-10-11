@@ -17,6 +17,7 @@ pnpm check                   # alles: typecheck, lint, vitest, rustfmt, clippy, 
 pnpm tauri build             # .app/.dmg (unsigniert)
 pnpm badges                  # README-Zahlen neu messen (.github/badges/*.json)
 pnpm screenshots             # docs/screenshots/* und docs/banner.png aus der Browser-Demo rendern
+pnpm perf:ui                 # Bildzeiten der Oberfläche messen (Protokoll: docs/performance.md)
 ```
 
 ## Struktur
@@ -146,6 +147,18 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - Tempo-Fader: in der App ist der Fader-Wert oben = 1 (wie alle Fader), Tempo oben = −1
   (langsamer, wie aufgedruckt). Umrechnung nur über `faderToTempo`/`tempoToFader`
   (`src/state/extrapolate.ts`) bzw. `tempo_to_fader` (dto.rs) – sonst kippt die Richtung.
+
+- **Tastenkürzel** stehen nur in `src/shell/shortcuts.ts` (Handler, `?`-Übersicht und ein Test,
+  der beide READMEs abgleicht). Gebunden wird über `KeyboardEvent.code`, Y/Z bleiben frei.
+  Elemente, die eine Taste selbst verarbeiten, rufen `preventDefault` – dann schweigt der
+  globale Handler (Trackliste: `1`/`2`).
+- Playwright: `fill()` löst **kein** keydown aus – für Tastatur-Tests `pressSequentially`.
+  Negative Prüfungen („Taste wirkt nicht“) brauchen eine kurze Wartezeit, sonst besteht
+  `toBeVisible` sofort, bevor der Zustand ankommt.
+- Einstellungen (Theme, Start-Tempobereich, Crossfader-Kurve) liegen im `localStorage`
+  (`rille.prefs`, `src/settings/prefs.ts`); das Theme wird vor dem ersten Render gesetzt und
+  im Tauri-Fenster per `setTheme` gespiegelt (Capability `core:window:allow-set-theme`).
+- Mock-Parameter: `?demo` (zwei spielende Decks), `?noaudio` (kein Ausgabegerät).
 
 ## Doku, Badges, Screenshots
 - README ist zweisprachig: `README.md` (Englisch, vollständige Badge-Liste) und `README.de.md`.

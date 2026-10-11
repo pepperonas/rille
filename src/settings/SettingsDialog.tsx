@@ -2,9 +2,10 @@ import type { Ref } from 'react';
 import { copyrightLine } from '../shell/copyright';
 import { AudioSettings } from './AudioSettings';
 import { ControllerSettings } from './ControllerSettings';
+import { DisplaySettings } from './DisplaySettings';
 import styles from './SettingsDialog.module.css';
 
-/** Settings: audio for now; controller and display arrive with later milestones. */
+/** Settings: audio, controller, display and playback. */
 interface Props {
   ref: Ref<HTMLDialogElement>;
   open: boolean;
@@ -22,6 +23,8 @@ export function SettingsDialog({ ref, open, onClose, onOpenMonitor }: Props) {
       <AudioSettings open={open} />
       <h3 className={styles.section}>Controller</h3>
       <ControllerSettings onOpenMonitor={onOpenMonitor} />
+      <h3 className={styles.section}>Darstellung &amp; Wiedergabe</h3>
+      <DisplaySettings />
       <form method="dialog" className={styles.actions}>
         <button type="submit" className={styles.textButton}>
           Fertig

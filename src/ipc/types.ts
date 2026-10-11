@@ -279,6 +279,8 @@ export interface Backend {
   setMidiMonitor(on: boolean): Promise<void>;
   /** Open a link in the default browser (only allow-listed URLs, see links.ts). */
   openExternal(url: string): Promise<void>;
+  /** Native window appearance (vibrancy); `null` follows the system. */
+  setWindowTheme(theme: 'dark' | 'light' | null): Promise<void>;
   deck(deck: Deck, action: DeckAction): void;
   mixer(action: MixerAction): void;
 }

@@ -22,6 +22,7 @@ interface Props {
 export function GridEditor({ deck, libraryId, grid }: Props) {
   const [open, setOpen] = useState(false);
   const [taps, setTaps] = useState<number[]>([]);
+  const tapsRef = useRef<number[]>([]);
   const root = useRef<HTMLDivElement>(null);
   const panel = useRef<HTMLDivElement>(null);
   // The grid as last sent: the library echoes changes only every 250 ms, so quick clicks must
@@ -57,7 +58,9 @@ export function GridEditor({ deck, libraryId, grid }: Props) {
 
   const tap = () => {
     const now = performance.now();
-    const next = [...taps, now].slice(-16);
+    // From the ref, not the render: two taps before a re-render must both count.
+    const next = [...tapsRef.current, now].slice(-16);
+    tapsRef.current = next;
     setTaps(next);
     const bpm = tapTempo(next);
     if (bpm === null) return;

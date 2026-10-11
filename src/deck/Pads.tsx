@@ -1,7 +1,6 @@
-import { backend } from '../ipc';
 import type { Deck } from '../ipc/types';
 import { useAppState } from '../state/store';
-import { setPadMode } from './padMode';
+import { pressPad, setPadMode } from './padMode';
 import { beatFrames, beatsLabel, JUMP_BEATS, LOOP_BEATS, PAD_MODES } from './beat';
 import styles from './Pads.module.css';
 
@@ -20,19 +19,7 @@ export function Pads({ deck }: { deck: Deck }) {
   });
   const set = cues.split(',').map((c) => c !== '');
 
-  const press = (index: number, shift: boolean) => {
-    if (mode === 'hotCue') {
-      backend.deck(
-        deck,
-        shift ? { type: 'hotCueClear', slot: index } : { type: 'hotCue', slot: index },
-      );
-    } else if (mode === 'beatLoop') {
-      const beats = LOOP_BEATS[index] ?? 1;
-      backend.deck(deck, shift ? { type: 'loopExit' } : { type: 'beatLoop', beats });
-    } else {
-      backend.deck(deck, { type: 'beatJump', beats: JUMP_BEATS[index] ?? 1 });
-    }
-  };
+  const press = (index: number, shift: boolean) => pressPad(deck, index, shift);
 
   const pad = (index: number) => {
     if (mode === 'hotCue') {

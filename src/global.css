@@ -41,3 +41,11 @@ button {
   font-family: var(--font-numeric);
   font-variant-numeric: tabular-nums;
 }
+
+kbd {
+  padding: 0 var(--space-1);
+  border-radius: var(--shape-xs);
+  border: var(--stroke-hairline) solid var(--md-outline-variant);
+  font: inherit;
+  font-weight: 600;
+}

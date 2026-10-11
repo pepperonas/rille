@@ -52,6 +52,23 @@ const scenes = [
     },
   },
   {
+    file: 'light.png',
+    src: '/?demo',
+    prefs: { theme: 'light' },
+    act: async (app) => {
+      await app.getByRole('heading', { name: 'Deep Hours (Extended Mix)' }).waitFor();
+    },
+  },
+  {
+    file: 'shortcuts.png',
+    src: '/?demo',
+    act: async (app) => {
+      await app.getByRole('heading', { name: 'Neon Avenue (Club Edit)' }).waitFor();
+      await app.getByRole('button', { name: 'Tastenkürzel' }).click();
+      await app.getByRole('dialog', { name: 'Tastenkürzel' }).waitFor();
+    },
+  },
+  {
     file: 'midi-monitor.png',
     src: '/?demo',
     act: async (app) => {
@@ -70,6 +87,13 @@ async function main() {
   try {
     for (const scene of scenes) {
       const page = await browser.newPage({ viewport: FRAME, deviceScaleFactor: 2 });
+      if (scene.prefs) {
+        // Saved preferences, as the app reads them on start (runs in the app frame too).
+        await page.addInitScript(
+          (p) => localStorage.setItem('rille.prefs', JSON.stringify(p)),
+          scene.prefs,
+        );
+      }
       await page.goto(`${BASE}/tools/frame.html?src=${encodeURIComponent(scene.src)}`);
       const app = page.frameLocator('#app');
       await scene.act(app);

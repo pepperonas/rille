@@ -115,15 +115,21 @@ test('the beatgrid editor halves, doubles and taps the tempo', async ({ page }) 
   await expect(a.getByLabel('Track-Tempo')).toHaveText('122.0 BPM');
   await panel.getByRole('button', { name: 'Tempo +0,01 BPM' }).click();
   await expect(a.getByLabel('Track-Tempo')).toHaveText('122.0 BPM'); // shown with one decimal
-  // Tapping sets the tempo the taps had (browser clicks are not metronome-exact: ±15 %).
-  for (let i = 0; i < 5; i++) {
-    await panel.getByRole('button', { name: 'Tap Tempo' }).click();
-    await page.waitForTimeout(500);
-  }
+  // Tapping sets the tempo the taps had. The taps are timed inside the page (busy wait, then
+  // click): Playwright clicks lag by tens of milliseconds when the machine is busy.
+  await panel.getByRole('button', { name: 'Tap Tempo' }).evaluate((button: HTMLElement) => {
+    const start = performance.now();
+    for (let i = 0; i < 5; i++) {
+      while (performance.now() < start + i * 500) {
+        // wait for the beat
+      }
+      button.click();
+    }
+  });
   await expect(panel).toContainText(/\d+\.\d\d BPM/);
   const bpm = Number((await a.getByLabel('Track-Tempo').textContent())?.split(' ')[0]);
-  expect(bpm).toBeGreaterThan(100);
-  expect(bpm).toBeLessThan(125);
+  expect(bpm).toBeGreaterThan(118);
+  expect(bpm).toBeLessThan(122);
   expect(bpm).not.toBe(122);
   await page.keyboard.press('Escape');
   await expect(panel).toHaveCount(0);

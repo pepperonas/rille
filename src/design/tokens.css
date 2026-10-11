@@ -77,6 +77,9 @@
   --size-badge: 32px;
   --size-dialog-min: 320px;
   --size-dialog-wide: 520px;
+  --size-dialog-shortcuts: 880px;
+  --size-shortcut-column: 360px;
+  --size-shortcut-keys: 136px;
   --size-about-icon: 64px;
   --size-monitor-width: 760px;
   --size-monitor-height: 560px;

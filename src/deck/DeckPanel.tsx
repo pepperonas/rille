@@ -110,8 +110,11 @@ export function DeckPanel({ deck }: Props) {
             <>
               <p className={styles.emptyTitle}>Kein Track geladen</p>
               <p className={styles.emptyHint}>
-                Audiodatei aus dem Finder hierher ziehen. Unterstützt: MP3, AAC/M4A, ALAC, FLAC,
-                WAV, AIFF.
+                Track aus der Library oder eine Audiodatei aus dem Finder hierher ziehen.
+                Unterstützt: MP3, AAC/M4A, ALAC, FLAC, WAV, AIFF.
+              </p>
+              <p className={styles.emptyHint}>
+                <kbd>?</kbd> zeigt alle Tastenkürzel.
               </p>
             </>
           )}
