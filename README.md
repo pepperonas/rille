@@ -167,6 +167,17 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
   library and its analysis jumps the queue.
 - **Remaining-time warning** — the last 30 seconds turn the remaining time red and let it pulse
   (steady with reduced motion).
+- **Sync and sync lock** — SYNC matches tempo and phase to the other deck once (at half or
+  double tempo when that is closer: 174 follows 87, widening the tempo range if needed); LOCK
+  keeps following it and pulls the phase in with at most 2 % speed change, never with a jump.
+- **Hot cues, loops, beat jump** — eight hot cues per deck (snapped to a beat within ⅛ beat,
+  saved in the library), beat loops from ¼ to 32 beats that repeat exactly at any tempo (the
+  audio block is split at the loop end), beat jumps of ½, 1, 4 and 16 beats that take a
+  running loop along. Shown in both waveforms.
+- **Pads** — eight pads per deck in three modes (Hot Cue, Loop, Jump), chosen in the app; the
+  DDJ-200 pads follow it, their LEDs show set cues and blink the active loop with the beat.
+- **Beatgrid correction** — move the grid by 10 ms, halve or double the tempo, fine-tune by
+  0.01 BPM, or tap it in; saved in the library and applied to a playing deck at once.
 - **Pioneer-style cue** — paused: set the cue point; hold on the cue point to preview and
   release to return; press Play while holding to keep playing; while playing: back to cue and
   pause. Shift + Cue jumps to the start.
@@ -203,8 +214,7 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 - **About dialog** — version, donate and rate buttons, links to the source; external links may
   open only the allow-listed URLs.
 
-**Coming next** — sync, hot cues, loops and
-pads (M7), headphone cueing (M8). See the [Roadmap](#%EF%B8%8F-roadmap).
+**Coming next** — headphone cueing (M8). See the [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
 
@@ -221,13 +231,13 @@ mode and the MIDI monitor are in the settings.
 | Jog touch + platter | Scratch (vinyl mode); bend with vinyl mode off | Fast search | ✅ |
 | Jog rim | Pitch bend | Browse the library | ✅ |
 | Tempo fader | Tempo (top = slower, as printed), soft takeover | — | ✅ |
-| Beat Sync | Short: sync · long: sync lock | Cycle tempo range (±6/10/16 %/wide) | M7 / ✅ |
+| Beat Sync | Short: sync · long: sync lock (LED = lock) | Cycle tempo range (±6/10/16 %/wide) | ✅ |
 | EQ Hi / Mid / Low | Three-band isolator EQ | — | ✅ |
 | CFX | Bipolar filter (left low-pass, right high-pass) | — | ✅ |
 | Headphone cue | Pre-listen the channel | Load the selected track | M8 / ✅ |
 | Master cue | Master in the headphones | — | M8 |
 | Transition FX | Echo-out / filter-out on the louder playing deck; again = cancel | Change effect | ✅ |
-| Pads 1–8 | Hot cue / beat loop / beat jump | Delete / exit loop | M7 |
+| Pads 1–8 | Hot cue / beat loop (¼–32) / beat jump (top row back ½·1·4·16, bottom forward), mode chosen in the app | Delete cue / exit loop | ✅ |
 
 **How the controller is handled**
 
@@ -263,6 +273,9 @@ Everything works without a controller:
 | Load a track | Drop an audio file from the Finder onto a deck, or a library row (drag, double-click) |
 | Seek | Click into the overview waveform under the time |
 | Waveform zoom | Mouse wheel over the detail waveform, or focus it and press + / − |
+| Sync | SYNC (once) and LOCK (keep following) next to Play |
+| Pads | Choose Hot Cue / Loop / Jump above the pads; click a pad; Shift + click deletes a cue or leaves the loop |
+| Beatgrid | GRID next to the BPM: ◀ ▶ move it, ÷2 ×2, ±0.01 BPM, TAP in time |
 | Import music | "Ordner importieren", or drop a folder onto the library |
 | Library | Search field (↓ / Enter jumps into the list); in the list ↑ ↓, Page ↑ ↓, Home / End; Enter = first empty deck, `1` / `2` = deck 1 / 2; click a column to sort |
 | Play / Pause, Cue | Click, or focus the button and press Space / Enter (Cue: hold to preview) |
@@ -397,12 +410,12 @@ and CI commits new numbers whenever they change.
 
 | Suite | Where | Highlights |
 |---|---|---|
-| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, keylock pitch and timing at ±16 % (zero crossings), keylock alignment with the playhead, no gap after jumps at any tempo, reverse, scratch, bend, search, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps, progressive loading (reader never sees unpublished frames), BPM on synthetic patterns (kicks at 90–174 BPM, swing, open hats, breakdown, live-drummer drift) and refusals (silence, noise, random hits), peaks format, database migrations, import → analysis → peaks end to end |
+| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, keylock pitch and timing at ±16 % (zero crossings), keylock alignment with the playhead, sync at ×½/×2 and range widening, sync lock holding the phase for 30 s while the leader changes tempo, loops exact to the frame at any tempo, no gap after jumps at any tempo, reverse, scratch, bend, search, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps, progressive loading (reader never sees unpublished frames), BPM on synthetic patterns (kicks at 90–174 BPM, swing, open hats, breakdown, live-drummer drift) and refusals (silence, noise, random hits), peaks format, database migrations, import → analysis → peaks end to end |
 | Allocation guard | `crates/rille-engine/tests/no_alloc.rs` | 2,000 blocks under `assert_no_alloc` incl. tempo, keylock, scratch and reverse, plus a counter-check that a planted allocation is caught |
 | C++ allocation guard | `crates/rille-engine/tests/stretch_alloc.rs` | Signalsmith Stretch `process`/`reset`/`seek` at changing rates through the `malloc_logger` hook, with a counter-check |
 | CoreMIDI round trip | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtual DDJ-200 → port → decoder → action, and LEDs back |
 | Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | peaks format (byte-identical with Rust), zoom level choice, beat positions, library search/sort/selection, store and load races, position extrapolation, token sync and contrast, "no raw values" guard |
-| E2E (Playwright) | `e2e/` | waveforms drawn (checked on a screenshot), no drawing while idle, click-to-seek, zoom, remaining-time warning with and without reduced motion, library import with progress, virtualised list, search, sort, keyboard loading, drag onto a deck, load, play, cue, eject, keyboard operation, faders, tempo range and readout, keylock, reverse and bend while held, layout at 1024×680, settings, controller UI — against the mock backend |
+| E2E (Playwright) | `e2e/` | hot cues, loops, beat jump, sync and lock, grid editor and tap, decks fit above the library at 1024×680–1440×900, waveforms drawn (checked on a screenshot), no drawing while idle, click-to-seek, zoom, remaining-time warning with and without reduced motion, library import with progress, virtualised list, search, sort, keyboard loading, drag onto a deck, load, play, cue, eject, keyboard operation, faders, tempo range and readout, keylock, reverse and bend while held, layout at 1024×680, settings, controller UI — against the mock backend |
 
 Practices: Clippy with `-D warnings`, `unwrap`/`expect`/`panic` denied outside tests, and new
 guards are mutation-checked (the test is run once against deliberately broken code to prove it
@@ -442,7 +455,7 @@ rille/
 | M4 | Tempo ranges, keylock (Signalsmith Stretch), pitch bend, scratch, reverse | ✅ (jog calibration at hardware acceptance) |
 | M5 | Library: import, SQLite, BPM/beatgrid analysis, search, drag & drop | ✅ |
 | M6 | Waveforms (overview + scrolling detail, frequency colours), deck UI | ✅ |
-| M7 | Sync & sync lock, hot cues, beat loops, beat jump, pad modes | ⏳ |
+| M7 | Sync & sync lock, hot cues, beat loops, beat jump, pad modes | ✅ (hardware acceptance pending) |
 | M8 | Headphone cueing on a second device or a 4-channel interface | ⏳ |
 | M9 | Full keyboard control, light theme, empty states, measured budgets | ⏳ |
 

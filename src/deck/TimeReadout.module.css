@@ -11,13 +11,13 @@
 }
 
 .elapsed {
-  font: var(--type-display-s);
+  font: var(--time-elapsed-font);
   font-stretch: var(--font-stretch-emphasized);
   color: var(--md-on-surface);
 }
 
 .remaining {
-  font: var(--type-headline-m);
+  font: var(--time-remaining-font);
   font-stretch: var(--font-stretch-emphasized);
   color: var(--accent);
 }

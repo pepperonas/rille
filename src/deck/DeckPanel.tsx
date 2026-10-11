@@ -9,6 +9,9 @@ import { usePeaks } from '../waveform/usePeaks';
 import { TimeReadout } from './TimeReadout';
 import { TempoButtons, TempoFader } from './Tempo';
 import { Transport } from './Transport';
+import { GridEditor } from './GridEditor';
+import { Pads } from './Pads';
+import { SyncButtons } from './Sync';
 import styles from './DeckPanel.module.css';
 
 interface Props {
@@ -24,6 +27,10 @@ export function DeckPanel({ deck }: Props) {
   const libTrack = useAppState((s) => trackById(s.library.tracks, libraryId));
   const peaks = usePeaks(libraryId);
   const bpm = libTrack?.bpm ?? (info.status === 'ready' ? info.bpm : null);
+  const grid =
+    libTrack?.bpm != null && libTrack.firstBeat != null
+      ? { bpm: libTrack.bpm, firstBeat: libTrack.firstBeat }
+      : null;
 
   return (
     <section className={styles.deck} data-deck={deck} aria-label={label}>
@@ -51,16 +58,15 @@ export function DeckPanel({ deck }: Props) {
               <h2 className={styles.title} title={info.title}>
                 {info.title}
               </h2>
-              {(info.artist || bpm !== null) && (
-                <p className={styles.meta}>
-                  {info.artist && <span>{info.artist}</span>}
-                  {bpm !== null && (
-                    <span className={`${styles.bpm} numeric`} aria-label="Track-Tempo">
-                      {bpm.toFixed(1)} BPM
-                    </span>
-                  )}
-                </p>
-              )}
+              <div className={styles.meta}>
+                {info.artist && <span className={styles.artist}>{info.artist}</span>}
+                {bpm !== null && (
+                  <span className={`${styles.bpm} numeric`} aria-label="Track-Tempo">
+                    {bpm.toFixed(1)} BPM
+                  </span>
+                )}
+                {libraryId !== null && <GridEditor deck={deck} libraryId={libraryId} grid={grid} />}
+              </div>
               {info.warning && (
                 <p className={styles.warning} role="alert">
                   {info.warning}
@@ -76,8 +82,12 @@ export function DeckPanel({ deck }: Props) {
             <TimeReadout deck={deck} />
             <Overview deck={deck} peaks={peaks} />
             <div className={styles.controls}>
-              <Transport deck={deck} />
+              <div className={styles.transportRow}>
+                <Transport deck={deck} />
+                <SyncButtons deck={deck} />
+              </div>
               <TempoButtons deck={deck} />
+              <Pads deck={deck} />
             </div>
           </div>
           <TempoFader deck={deck} />

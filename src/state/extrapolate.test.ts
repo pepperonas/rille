@@ -27,6 +27,10 @@ const deck = (over: Partial<DeckFrame> = {}): DeckFrame => ({
   rate: 1,
   reverse: false,
   scratching: false,
+  grid: null,
+  hotCues: Array<number | null>(8).fill(null),
+  loopRange: null,
+  syncLock: false,
   ...over,
 });
 
@@ -140,21 +144,8 @@ describe('formatRemaining', () => {
 });
 
 describe('endingSoon', () => {
-  const base = {
-    trackId: 1,
-    position: 0,
-    frames: 48_000 * 200,
-    playing: true,
-    cue: 0,
-    previewing: false,
-    peak: [0, 0] as [number, number],
-    tempo: 0,
-    tempoRange: 'ten' as const,
-    keylock: false,
-    rate: 1,
-    reverse: false,
-    scratching: false,
-  };
+  const base = deck({ position: 0, frames: 48_000 * 200 });
+
   it('warns in the last 30 s of a playing deck, measured at its speed', () => {
     expect(endingSoon(base, 48_000 * 171, 48_000)).toBe(true);
     expect(endingSoon(base, 48_000 * 169, 48_000)).toBe(false);

@@ -1,0 +1,67 @@
+.root {
+  position: relative;
+  display: inline-flex;
+}
+
+.trigger {
+  border: var(--stroke-hairline) solid var(--md-outline-variant);
+  border-radius: var(--shape-sm);
+  padding: 0 var(--space-2);
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-s);
+  letter-spacing: var(--tracking-caps);
+  cursor: pointer;
+}
+
+.trigger[aria-expanded='true'] {
+  background: var(--md-secondary-container);
+  color: var(--md-on-secondary-container);
+  border-color: transparent;
+}
+
+.panel {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  border-radius: var(--shape-md);
+  padding: var(--space-3);
+  background: var(--md-surface-container-high);
+  box-shadow: 0 var(--space-1) var(--space-3) var(--md-scrim);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.row button {
+  min-width: var(--size-icon-button);
+  height: var(--size-icon-button);
+  border: var(--stroke-hairline) solid var(--md-outline-variant);
+  border-radius: var(--shape-sm);
+  background: transparent;
+  color: var(--md-on-surface);
+  font: var(--type-label-m);
+  cursor: pointer;
+}
+
+.row .tap {
+  padding: 0 var(--space-4);
+  background: var(--accent-container);
+  color: var(--on-accent-container);
+  border-color: transparent;
+}
+
+.readout,
+.hint {
+  margin: 0;
+  font: var(--type-body-s);
+  color: var(--md-on-surface-variant);
+  white-space: nowrap;
+}

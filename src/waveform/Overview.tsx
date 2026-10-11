@@ -13,6 +13,8 @@ import styles from './Overview.module.css';
 
 /** Arrow keys move the playhead by this much (Shift: ten times as far). */
 const KEY_STEP_SECONDS = 5;
+/** How long a seek counts as not yet visible in the engine state. */
+const SEEK_SETTLE_MS = 250;
 
 interface Props {
   deck: Deck;
@@ -37,6 +39,17 @@ export function Overview({ deck, peaks }: Props) {
     return rate > 0 ? Math.floor((s.frame?.decks[i]?.position ?? 0) / rate) : 0;
   });
   const data = peaks.status === 'ready' ? peaks.peaks : null;
+  // Hot cues and loop as fractions of the track (strings keep the selector stable).
+  const marks = useAppState((s) => {
+    const d = s.frame?.decks[i];
+    if (!d || d.frames <= 0) return '';
+    const cues = d.hotCues.map((c) => (c === null ? '' : (c / d.frames).toFixed(5))).join(',');
+    const loop = d.loopRange ? d.loopRange.map((f) => (f / d.frames).toFixed(5)).join(':') : '';
+    return `${cues}|${loop}`;
+  });
+  const [cueText = '', loopText = ''] = marks.split('|');
+  const cueMarks = cueText.split(',');
+  const loopMark = loopText ? loopText.split(':').map(Number) : null;
 
   // The image.
   useEffect(() => {
@@ -86,7 +99,13 @@ export function Overview({ deck, peaks }: Props) {
     return d && !d.playing ? d.position : -1;
   });
 
-  const seekTo = (frame: number) => backend.deck(deck, { type: 'seek', frame });
+  // The last seek sent, until the engine's state shows it: quick key presses build on it
+  // instead of on a position the engine has already left.
+  const pendingSeek = useRef<{ frame: number; at: number } | null>(null);
+  const seekTo = (frame: number) => {
+    pendingSeek.current = { frame, at: performance.now() };
+    backend.deck(deck, { type: 'seek', frame });
+  };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0 || frames <= 0) return;
@@ -98,11 +117,14 @@ export function Overview({ deck, peaks }: Props) {
     const d = store.get().frame?.decks[i];
     if (!d || frames <= 0 || sampleRate <= 0) return;
     const step = KEY_STEP_SECONDS * sampleRate * (e.shiftKey ? 10 : 1);
+    const pending = pendingSeek.current;
+    const from =
+      pending && performance.now() - pending.at < SEEK_SETTLE_MS ? pending.frame : d.position;
     const target: Record<string, number> = {
-      ArrowRight: d.position + step,
-      ArrowUp: d.position + step,
-      ArrowLeft: d.position - step,
-      ArrowDown: d.position - step,
+      ArrowRight: from + step,
+      ArrowUp: from + step,
+      ArrowLeft: from - step,
+      ArrowDown: from - step,
       Home: 0,
       End: frames,
     };
@@ -137,6 +159,30 @@ export function Overview({ deck, peaks }: Props) {
       {peaks.status !== 'ready' && <div className={styles.waiting} aria-hidden="true" />}
       <div className={styles.played} aria-hidden="true" />
       <div className={styles.cue} aria-hidden="true" />
+      {loopMark && (
+        <div
+          className={styles.loop}
+          style={
+            {
+              '--from': String(loopMark[0]),
+              '--to': String(loopMark[1]),
+            } as React.CSSProperties
+          }
+          aria-hidden="true"
+        />
+      )}
+      {cueMarks.map((f, n) =>
+        f === '' ? null : (
+          <span
+            key={n}
+            className={`${styles.hotCue} numeric`}
+            style={{ '--at': f } as React.CSSProperties}
+            aria-hidden="true"
+          >
+            {n + 1}
+          </span>
+        ),
+      )}
       <div className={styles.playhead} aria-hidden="true" />
     </div>
   );

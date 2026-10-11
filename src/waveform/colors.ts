@@ -9,6 +9,8 @@ export interface WaveColors {
   mid: Rgb;
   high: Rgb;
   grid: Rgb;
+  cue: Rgb;
+  loop: Rgb;
 }
 
 let probe: CanvasRenderingContext2D | null | undefined;
@@ -40,6 +42,8 @@ export function waveColors(el: HTMLElement): WaveColors {
     mid: read('--wave-mid'),
     high: read('--wave-high'),
     grid: read('--wave-grid'),
+    cue: read('--wave-cue'),
+    loop: read('--wave-loop'),
   };
   span.remove();
   return colors;

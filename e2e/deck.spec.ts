@@ -34,7 +34,7 @@ test('load, play, cue back', async ({ page }) => {
   await expect(a.getByLabel('Gespielt')).not.toHaveText('0:00.0', { timeout: 2000 });
 
   // Cue while playing: back to the cue point (start) and pause.
-  await a.getByRole('button', { name: 'Cue' }).click();
+  await a.getByRole('button', { name: 'Cue', exact: true }).click();
   await expect(a.getByRole('button', { name: 'Play' })).toBeVisible();
   await expect(a.getByLabel('Gespielt')).toHaveText('0:00.0');
 });
@@ -78,7 +78,7 @@ test('play and cue work from the keyboard', async ({ page }) => {
   await a.getByRole('button', { name: 'Play' }).focus();
   await page.keyboard.press('Space');
   await expect(a.getByRole('button', { name: 'Pause' })).toBeVisible();
-  await a.getByRole('button', { name: 'Cue' }).focus();
+  await a.getByRole('button', { name: 'Cue', exact: true }).focus();
   await page.keyboard.press('Enter');
   await expect(a.getByRole('button', { name: 'Play' })).toBeVisible();
   await expect(a.getByLabel('Gespielt')).toHaveText('0:00.0');
@@ -87,7 +87,7 @@ test('play and cue work from the keyboard', async ({ page }) => {
 test('holding cue previews and releasing with shift still returns', async ({ page }) => {
   const a = deck(page, 'a');
   await a.getByRole('button', { name: 'Demo-Track laden' }).click();
-  const cue = a.getByRole('button', { name: 'Cue' });
+  const cue = a.getByRole('button', { name: 'Cue', exact: true });
   await cue.hover();
   await page.mouse.down();
   await expect(a.getByLabel('Gespielt')).not.toHaveText('0:00.0', { timeout: 2000 });
@@ -256,6 +256,8 @@ test('pitch bend acts only while held, also from the keyboard', async ({ page })
 
 for (const [width, height] of [
   [1440, 900],
+  [1280, 881],
+  [1280, 800],
   [1024, 680],
 ] as const) {
   test(`deck controls fit at ${width}x${height}`, async ({ page }) => {
@@ -280,6 +282,26 @@ for (const [width, height] of [
       // the bend buttons sit left of the tempo fader, the clock above the transport
       expect(bend.x + bend.width).toBeLessThanOrEqual(tempo.x);
       expect(time.y + time.height).toBeLessThanOrEqual(play.y);
+      // The pads are inside the deck too.
+      const pad = await panel.getByRole('group', { name: /^Pads/ }).boundingBox();
+      expect(pad).toBeTruthy();
+      if (pad) expect(pad.y + pad.height).toBeLessThanOrEqual(box.y + box.height);
+    }
+    // Nothing spills out of the stage onto the library (since M6 the deck did, unnoticed).
+    const spill = await page.evaluate(() => {
+      const stage = document.querySelector('main')?.getBoundingClientRect();
+      const library = document.querySelector('[data-library]')?.getBoundingClientRect();
+      return Array.from(document.querySelectorAll<HTMLElement>('main > *')).map((el) => ({
+        bottom: el.getBoundingClientRect().bottom,
+        overflow: el.scrollHeight - el.clientHeight,
+        stage: stage?.bottom ?? 0,
+        library: library?.top ?? 0,
+      }));
+    });
+    for (const s of spill) {
+      expect(s.bottom).toBeLessThanOrEqual(s.stage + 0.5);
+      expect(s.bottom).toBeLessThanOrEqual(s.library);
+      expect(s.overflow).toBeLessThanOrEqual(0);
     }
   });
 }

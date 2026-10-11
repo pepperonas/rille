@@ -98,3 +98,8 @@
   outline: var(--stroke-thick) solid var(--md-primary);
   outline-offset: var(--space-1);
 }
+
+.toggle:disabled {
+  opacity: 0.38;
+  cursor: default;
+}

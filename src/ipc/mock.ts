@@ -8,6 +8,7 @@ import type {
   Deck,
   DeckAction,
   DeckFrame,
+  Grid,
   LibraryProgress,
   LibraryTrack,
   MixerAction,
@@ -15,6 +16,15 @@ import type {
 } from './types';
 import { NEXT_RANGE, RANGE_SPAN } from '../state/extrapolate';
 import { encodePeaks, syntheticPeaks } from '../waveform/peaks';
+import {
+  beatAt,
+  beatFrames,
+  follow,
+  frameOfBeat,
+  quantizeCue,
+  tempoForRate,
+  wrapHalf,
+} from '../deck/beat';
 
 const RATE = 48_000;
 const BANDS: Band[] = ['low', 'mid', 'high'];
@@ -23,7 +33,7 @@ const TRACK_SECONDS = 210;
 /** Bend held from the app, as in the engine (`BEND_HOLD`). */
 const BEND_HOLD = 0.04;
 
-type MockDeck = DeckFrame & { bend: -1 | 0 | 1 };
+type MockDeck = DeckFrame & { bend: -1 | 0 | 1; libraryId: number | null };
 
 function emptyDeck(): MockDeck {
   return {
@@ -40,7 +50,12 @@ function emptyDeck(): MockDeck {
     rate: 1,
     reverse: false,
     scratching: false,
+    grid: null,
+    hotCues: Array<number | null>(8).fill(null),
+    loopRange: null,
+    syncLock: false,
     bend: 0,
+    libraryId: null,
   };
 }
 
@@ -92,6 +107,9 @@ export function fakeTracks(from: number, count: number, analyzed: boolean): Libr
     };
   });
 }
+
+const gridOf = (t: LibraryTrack): Grid | null =>
+  t.bpm !== null && t.firstBeat !== null ? { bpm: t.bpm, firstBeat: t.firstBeat } : null;
 
 function fakeBpm(n: number): number | null {
   if (n % 11 === 7) return null; // ambient: no clear tempo
@@ -205,9 +223,16 @@ export function createMockBackend(): Backend {
       }
     }
     decks.forEach((d, i) => {
+      const other = decks[1 - i];
+      // Sync lock (simplified): follow the other deck's tempo, snap the phase.
+      if (d.syncLock && other?.playing) syncTo(d, other, true);
       d.rate = mockRate(d);
       if (d.playing) {
         d.position = Math.max(0, Math.min(d.frames, d.position + frames * d.rate));
+        if (d.loopRange && !d.reverse && d.position >= d.loopRange[1]) {
+          const [start, end] = d.loopRange;
+          d.position = start + ((d.position - end) % Math.max(1, end - start));
+        }
         if (d.reverse && d.position <= 0) d.playing = false;
         if (d.position >= d.frames) {
           d.playing = false;
@@ -239,6 +264,10 @@ export function createMockBackend(): Backend {
       rate: d.rate,
       reverse: d.reverse,
       scratching: d.scratching,
+      grid: d.grid ? { ...d.grid } : null,
+      hotCues: [...d.hotCues],
+      loopRange: d.loopRange ? [d.loopRange[0], d.loopRange[1]] : null,
+      syncLock: d.syncLock,
     });
     const peak = Math.max(decks[0].peak[0], decks[1].peak[0]) * state.masterGain;
     return {
@@ -338,8 +367,77 @@ export function createMockBackend(): Backend {
       case 'reverse':
         d.reverse = action.on;
         break;
+      case 'sync': {
+        const other = decks[decks[0] === d ? 1 : 0];
+        if (other) syncTo(d, other, other.playing);
+        break;
+      }
+      case 'syncLock': {
+        d.syncLock = action.on;
+        const other = decks[decks[0] === d ? 1 : 0];
+        if (action.on && other) syncTo(d, other, other.playing);
+        break;
+      }
+      case 'beatLoop': {
+        if (!d.grid || !(action.beats > 0)) break;
+        const len = action.beats * beatFrames(d.grid, RATE);
+        if (d.loopRange) {
+          const [start, end] = d.loopRange;
+          d.loopRange =
+            Math.abs(end - start - len) < 1 ? null : [start, Math.min(d.frames, start + len)];
+          break;
+        }
+        const step = Math.min(1, action.beats);
+        const start = frameOfBeat(
+          d.grid,
+          Math.floor(beatAt(d.grid, d.position, RATE) / step) * step,
+          RATE,
+        );
+        d.loopRange = [Math.max(0, start), Math.min(d.frames, start + len)];
+        break;
+      }
+      case 'loopExit':
+        d.loopRange = null;
+        break;
+      case 'beatJump': {
+        if (!d.grid) break;
+        const delta = action.beats * beatFrames(d.grid, RATE);
+        const to = Math.max(0, Math.min(d.frames - 1, d.position + delta));
+        const moved = to - d.position;
+        d.position = to;
+        if (d.loopRange) d.loopRange = [d.loopRange[0] + moved, d.loopRange[1] + moved];
+        break;
+      }
+      case 'hotCue': {
+        const cue = d.hotCues[action.slot];
+        if (cue === undefined) break;
+        if (cue === null)
+          d.hotCues[action.slot] = Math.round(quantizeCue(d.grid, d.position, RATE));
+        else d.position = cue;
+        break;
+      }
+      case 'hotCueClear':
+        if (action.slot < d.hotCues.length) d.hotCues[action.slot] = null;
+        break;
     }
     d.rate = mockRate(d);
+  }
+
+  /** The engine's sync rules: tempo (×½/×1/×2, widening the range), phase if wanted. */
+  function syncTo(d: MockDeck, other: MockDeck, phase: boolean) {
+    if (!d.grid || !other.grid || other.frames === 0) return;
+    const target = other.grid.bpm * (1 + other.tempo * RANGE_SPAN[other.tempoRange]);
+    const f = follow(d.grid.bpm, target);
+    const t = f && tempoForRate(f.rate, d.tempoRange);
+    if (!f || !t) return;
+    d.tempoRange = t.range;
+    d.tempo = t.tempo;
+    if (!phase) return;
+    const error = wrapHalf(
+      beatAt(d.grid, d.position, RATE) -
+        beatAt(other.grid, other.position, RATE) * f.beatsPerTargetBeat,
+    );
+    d.position = Math.max(0, d.position - error * beatFrames(d.grid, RATE));
   }
 
   function mixerAction(action: MixerAction) {
@@ -421,13 +519,17 @@ export function createMockBackend(): Backend {
     bpm: number | null,
     durationSecs: number,
     libraryId: number | null,
+    grid: Grid | null = null,
   ): number => {
     const id = nextId++;
     const d = decks[idx(deck)];
     // Tempo, range and keylock stay with the deck across loads, as in the engine.
-    const { tempo, tempoRange, keylock } = d;
+    const { tempo, tempoRange, keylock, syncLock } = d;
     Object.assign(d, emptyDeck(), {
       trackId: id,
+      libraryId,
+      grid,
+      syncLock,
       frames: Math.round(durationSecs * RATE),
       tempo,
       tempoRange,
@@ -512,7 +614,7 @@ export function createMockBackend(): Backend {
     async loadTrack(deck, id) {
       const t = library.find((x) => x.id === id);
       if (!t) throw new Error('Dieser Track ist nicht mehr in der Library');
-      return load(deck, t.title, t.artist, t.bpm, t.duration ?? TRACK_SECONDS, t.id);
+      return load(deck, t.title, t.artist, t.bpm, t.duration ?? TRACK_SECONDS, t.id, gridOf(t));
     },
     async loadFile(deck, path) {
       const title =
@@ -540,10 +642,24 @@ export function createMockBackend(): Backend {
         library = [...library, t];
         emit('library-tracks', [t]);
       }
-      return load(deck, t.title, t.artist, t.bpm, t.duration ?? TRACK_SECONDS, t.id);
+      return load(deck, t.title, t.artist, t.bpm, t.duration ?? TRACK_SECONDS, t.id, gridOf(t));
     },
     async controllerStatus() {
       return { ...controller };
+    },
+    async setPadMode() {},
+    async setGrid(id, bpm, firstBeat) {
+      const t = library.find((x) => x.id === id);
+      if (!t) throw new Error('Dieser Track ist nicht mehr in der Library');
+      const grid = bpm > 0 ? { bpm, firstBeat } : null;
+      const changed: LibraryTrack = {
+        ...t,
+        bpm: grid?.bpm ?? null,
+        firstBeat: grid?.firstBeat ?? null,
+      };
+      library = library.map((x) => (x.id === id ? changed : x));
+      emit('library-tracks', [changed]);
+      for (const d of decks) if (d.libraryId === id) d.grid = grid;
     },
     async setVinylMode(on) {
       controller.vinylMode = on;

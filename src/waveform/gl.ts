@@ -28,6 +28,9 @@ uniform int u_bins;           // bins at this level
 uniform vec3 u_low, u_mid, u_high, u_grid;
 uniform float u_bpm, u_firstBeat; // bpm 0 = no grid
 uniform float u_duration;         // seconds; no grid outside the track
+uniform vec2 u_loop;              // seconds; x < 0: no loop
+uniform float u_cues[8];          // seconds; < 0: empty
+uniform vec3 u_loopColor, u_cueColor;
 out vec4 color;
 
 vec3 bins(float from, float to) {
@@ -48,8 +51,9 @@ void main() {
   float t = u_center + (x - u_size.x * 0.5) * u_spp;
   vec3 v = bins(t, t + u_spp);
   float a = abs(gl_FragCoord.y - u_size.y * 0.5) / (u_size.y * 0.5);
-  // Premultiplied colour throughout.
+  // Premultiplied colour throughout. The loop tints the background behind the waveform.
   vec4 c = vec4(0.0);
+  if (u_loop.x >= 0.0 && t >= u_loop.x && t < u_loop.y) c = vec4(u_loopColor * 0.25, 0.25);
   if (a <= v.r) c = vec4(u_low, 1.0);
   if (a <= v.g * 0.8) c = vec4(u_mid, 1.0);
   if (a <= v.b * 0.55) c = vec4(u_high, 1.0);
@@ -65,12 +69,20 @@ void main() {
       c = vec4(u_grid * g, g) + c * (1.0 - g);
     }
   }
+  // Hot cues: a solid line each.
+  for (int k = 0; k < 8; k++) {
+    if (u_cues[k] >= 0.0 && abs(t - u_cues[k]) / u_spp < 1.0) c = vec4(u_cueColor, 1.0);
+  }
   // The past is dimmed.
   if (x < u_size.x * 0.5) c *= 0.5;
   color = c;
 }`;
 
 export interface DetailFrame {
+  /** Loop [start, end) in seconds. */
+  loop: [number, number] | null;
+  /** Hot cues in seconds (null = empty), up to 8. */
+  cues: Array<number | null>;
   center: number;
   /** Track length in seconds (the grid stops there). */
   duration: number;
@@ -87,6 +99,7 @@ export class DetailRenderer {
   private loc: Record<string, WebGLUniformLocation | null> = {};
   private colors: WaveColors | null = null;
   private lost = false;
+  private readonly cues = new Float32Array(8);
   private readonly onLost = (e: Event) => {
     e.preventDefault(); // ask for the context back
     this.lost = true;
@@ -135,6 +148,10 @@ export class DetailRenderer {
       'u_bpm',
       'u_firstBeat',
       'u_duration',
+      'u_loop',
+      'u_cues',
+      'u_loopColor',
+      'u_cueColor',
     ]) {
       this.loc[name] = gl.getUniformLocation(this.program, name);
     }
@@ -195,6 +212,13 @@ export class DetailRenderer {
     gl.uniform1f(this.loc.u_bpm ?? null, f.bpm > 0 ? f.bpm : 0);
     gl.uniform1f(this.loc.u_firstBeat ?? null, f.firstBeat);
     gl.uniform1f(this.loc.u_duration ?? null, f.duration);
+    gl.uniform2f(this.loc.u_loop ?? null, f.loop?.[0] ?? -1, f.loop?.[1] ?? -1);
+    // Reused every frame: no garbage at display rate.
+    this.cues.fill(-1);
+    f.cues.slice(0, 8).forEach((c, k) => (this.cues[k] = c ?? -1));
+    gl.uniform1fv(this.loc.u_cues ?? null, this.cues);
+    gl.uniform3f(this.loc.u_loopColor ?? null, ...rgb(colors.loop));
+    gl.uniform3f(this.loc.u_cueColor ?? null, ...rgb(colors.cue));
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

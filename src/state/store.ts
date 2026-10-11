@@ -5,6 +5,7 @@ import type {
   Deck,
   DeckLoadFailed,
   DeckLoaded,
+  PadMode,
   StateFrame,
 } from '../ipc/types';
 import { initialLibrary, type LibraryState } from '../library/model';
@@ -42,6 +43,8 @@ export interface AppState {
   library: LibraryState;
   /** Detail waveform zoom step (`ZOOM_SECONDS`), shared by both decks. */
   waveZoom: number;
+  /** What the pads of each deck do (app and controller alike). */
+  padMode: Record<Deck, PadMode>;
 }
 
 export const initialState: AppState = {
@@ -52,6 +55,7 @@ export const initialState: AppState = {
   controller: null,
   library: initialLibrary,
   waveZoom: DEFAULT_ZOOM,
+  padMode: { a: 'hotCue', b: 'hotCue' },
 };
 
 // Pure transitions, unit-tested.

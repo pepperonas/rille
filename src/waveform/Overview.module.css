@@ -59,3 +59,25 @@
   left: calc(var(--cue) * 100%);
   background: var(--wave-cue);
 }
+
+.loop {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--from) * 100%);
+  width: calc((var(--to) - var(--from)) * 100%);
+  min-width: var(--stroke-thick);
+  background: color-mix(in srgb, var(--wave-loop) 35%, transparent);
+  border-inline: var(--stroke-hairline) solid var(--wave-loop);
+}
+
+.hotCue {
+  position: absolute;
+  top: 0;
+  left: calc(var(--at) * 100%);
+  padding: 0 var(--space-1);
+  border-radius: 0 0 var(--shape-xs) 0;
+  background: var(--wave-cue);
+  color: var(--md-on-tertiary);
+  font: var(--type-label-s);
+}

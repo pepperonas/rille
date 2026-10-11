@@ -27,7 +27,22 @@ export interface DeckFrame {
   rate: number;
   reverse: boolean;
   scratching: boolean;
+  grid: Grid | null;
+  /** Hot cues in engine frames, null for empty pads (8). */
+  hotCues: Array<number | null>;
+  /** Active loop [start, end) in engine frames. */
+  loopRange: [number, number] | null;
+  syncLock: boolean;
 }
+
+export interface Grid {
+  bpm: number;
+  /** Seconds. */
+  firstBeat: number;
+}
+
+/** What the eight pads of a deck do (the DDJ-200 has no mode buttons). */
+export type PadMode = 'hotCue' | 'beatLoop' | 'beatJump';
 
 /** Tempo fader range: ±6 %, ±10 %, ±16 % or wide (±50 %). */
 export type TempoRange = 'six' | 'ten' | 'sixteen' | 'wide';
@@ -137,7 +152,14 @@ export type DeckAction =
   /** Pitch bend held from the app: -1 slower, 0 release, +1 faster. */
   | { type: 'bend'; direction: -1 | 0 | 1 }
   /** Plays backwards while held. */
-  | { type: 'reverse'; on: boolean };
+  | { type: 'reverse'; on: boolean }
+  | { type: 'sync' }
+  | { type: 'syncLock'; on: boolean }
+  | { type: 'beatLoop'; beats: number }
+  | { type: 'loopExit' }
+  | { type: 'beatJump'; beats: number }
+  | { type: 'hotCue'; slot: number }
+  | { type: 'hotCueClear'; slot: number };
 
 export type MixerAction =
   | { type: 'channelFader'; deck: Deck; value: number }
@@ -216,6 +238,10 @@ export interface Backend {
   libraryChooseFolder(): Promise<void>;
   controllerStatus(): Promise<ControllerStatus>;
   setVinylMode(on: boolean): Promise<void>;
+  /** Tell the controller what the pads of a deck do. */
+  setPadMode(deck: Deck, mode: PadMode): Promise<void>;
+  /** Store a corrected beatgrid (bpm ≤ 0 removes it). */
+  setGrid(libraryId: number, bpm: number, firstBeat: number): Promise<void>;
   setMidiMonitor(on: boolean): Promise<void>;
   /** Open a link in the default browser (only allow-listed URLs, see links.ts). */
   openExternal(url: string): Promise<void>;

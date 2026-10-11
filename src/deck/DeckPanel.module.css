@@ -10,13 +10,14 @@
   --wave-high: var(--md-on-surface);
   --wave-grid: var(--md-on-surface-variant);
   --wave-cue: var(--md-tertiary);
+  --wave-loop: var(--md-secondary);
 
   display: flex;
   flex-direction: column;
   min-width: 0;
   border-radius: var(--shape-xl);
   background: var(--md-surface-container-low);
-  padding: var(--space-4);
+  padding: var(--deck-padding);
 }
 
 /* A library track is dragged over this deck. */
@@ -95,8 +96,8 @@
   margin-left: auto;
   display: grid;
   place-items: center;
-  width: var(--size-icon-button);
-  height: var(--size-icon-button);
+  width: var(--size-eject);
+  height: var(--size-eject);
   border: 0;
   border-radius: var(--shape-full);
   background: transparent;
@@ -112,7 +113,7 @@
   flex: 1;
   display: flex;
   gap: var(--space-4);
-  margin-top: var(--space-4);
+  margin-top: var(--deck-gap);
   min-height: 0;
 }
 
@@ -121,19 +122,33 @@
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: var(--space-4);
+  gap: var(--deck-gap);
   min-width: 0;
+  min-height: 0;
 }
 
 .controls {
   display: flex;
   flex-direction: column;
+  gap: var(--deck-controls-gap);
+}
+
+.transportRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: var(--space-3);
+}
+
+.artist {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .title {
   margin: 0;
-  font: var(--type-headline-s);
+  font: var(--deck-title-font);
   font-stretch: var(--font-stretch-emphasized);
   white-space: nowrap;
   overflow: hidden;
@@ -141,14 +156,14 @@
 }
 
 .meta {
-  margin: var(--space-1) 0 0;
+  margin: var(--deck-meta-gap) 0 0;
   display: flex;
+  align-items: center;
   gap: var(--space-3);
+  min-height: var(--space-6);
   font: var(--type-title-s);
   color: var(--md-on-surface-variant);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .warning {
@@ -172,3 +187,4 @@
   font: var(--type-label-l);
   cursor: pointer;
 }
+

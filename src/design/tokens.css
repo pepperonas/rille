@@ -94,6 +94,7 @@
   --size-switch-width: 52px;
   --size-switch-height: 32px;
   --size-library-row: 36px;
+  --size-pad: 32px;
   --size-overview: 40px;
   --size-detail-min: 72px;
   --size-library-bpm: 72px;
@@ -109,6 +110,19 @@
   --tracking-wide: 0.02em;
   --tracking-caps: 0.08em;
 
+  /* Deck density (denser below ~880 px window height, see the media block below) */
+  --deck-padding: var(--space-4);
+  --deck-gap: var(--space-4);
+  --deck-controls-gap: var(--space-3);
+  --deck-meta-gap: var(--space-1);
+  --deck-title-font: var(--type-headline-s);
+  --time-elapsed-font: var(--type-display-s);
+  --time-remaining-font: var(--type-headline-m);
+  --pad-gap: var(--space-2);
+  --pad-mode-padding: var(--space-1) var(--space-3);
+  --pad-mode-font: var(--type-label-m);
+  --size-eject: var(--size-icon-button);
+
   /* Layout */
   --layout-library-min: 150px;
   --layout-library-share: 30%;
@@ -123,6 +137,28 @@
   :root {
     --size-knob: 30px;
     --size-fader-min-length: 72px;
+  }
+}
+
+/* Windows below ~880 px: the decks grow denser so they stay above the library (checked by
+   the layout test in e2e/deck.spec.ts at 1280×800 and 1024×680). */
+@media (max-height: 880px) {
+  :root {
+    --size-detail-min: 40px;
+    --size-overview: 28px;
+    --size-pad: 26px;
+    --size-badge: 24px;
+    --size-eject: 24px;
+    --deck-padding: var(--space-3);
+    --deck-gap: var(--space-2);
+    --deck-controls-gap: var(--space-2);
+    --deck-meta-gap: 0;
+    --deck-title-font: var(--type-title-l);
+    --time-elapsed-font: var(--type-headline-m);
+    --time-remaining-font: var(--type-title-l);
+    --pad-gap: var(--space-1);
+    --pad-mode-padding: 0 var(--space-2);
+    --pad-mode-font: var(--type-label-s);
   }
 }
 

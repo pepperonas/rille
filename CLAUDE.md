@@ -87,6 +87,15 @@ Das Frontend rechnet nichts Audio-Relevantes.
   WebGL2 ohne `preserveDrawingBuffer`: zurücklesen geht nur über einen Screenshot
   (siehe `e2e/waveform.spec.ts`). `window.__rilleWaveDraws` zählt Zeichnungen (nur Dev) für den
   Leerlauf-Test.
+- **Deck-Dichte:** unter ~880 px Fensterhöhe verdichten sich die Decks – ausschließlich über
+  Tokens in `tokens.css` (`--deck-*`, `--pad-*`, `--time-*`); Komponenten-CSS darf keine
+  `px`-Media-Queries enthalten (Wächter `no-raw-values`). Der Layout-Test prüft, dass nichts
+  über die Library ragt.
+- **Loops** teilen den Audioblock an der Loop-Grenze (`Deck::until_loop_end`/`wrap_loop`) und
+  tragen den Überhang samt Nachkommaanteil in den nächsten Durchlauf. Audio-Vergleiche über
+  Loop-Durchläufe erst ab dem zweiten Durchlauf: der Isolator-EQ ist ein IIR mit Gedächtnis.
+- `Command` ist 32 Byte groß, seit `SetGrid` zwei `f64` trägt (ein `f32`-Grid driftet).
+- In Playwright „Cue“ immer mit `exact: true` suchen: die Hot-Cue-Pads heißen „Hot Cue n …“.
 - BPM: lieber „kein Tempo“ als ein geratenes. Neue Heuristiken immer gegen Rauschen und
   Zufallsschläge prüfen (`bpm.rs`-Tests) und mit `examples/analyze` auf echten Tracks.
 - **CoreMIDI sieht neue Geräte nur, wenn der erste MIDI-Client des Prozesses auf einem Thread

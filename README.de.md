@@ -118,6 +118,19 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
   der Library, ihre Analyse wird vorgezogen.
 - **Restzeit-Warnung** — in den letzten 30 Sekunden wird die Restzeit rot und pulsiert (ruhig
   bei reduzierter Bewegung).
+- **Sync und Sync-Lock** — SYNC gleicht Tempo und Phase einmal an das andere Deck an (bei
+  halbem oder doppeltem Tempo, wenn das näher liegt: 174 folgt 87; der Tempo-Bereich wird bei
+  Bedarf erweitert); LOCK folgt dauerhaft und zieht die Phase mit höchstens 2 %
+  Geschwindigkeitsänderung heran, nie mit einem Sprung.
+- **Hot Cues, Loops, Beat Jump** — acht Hot Cues je Deck (auf einen Beat gerastet, wenn er
+  näher als ⅛ Beat liegt, in der Library gespeichert), Beat Loops von ¼ bis 32 Beats, die bei
+  jedem Tempo exakt wiederholen (der Audioblock wird am Loop-Ende geteilt), Beat Jumps um ½, 1,
+  4 und 16 Beats, die einen laufenden Loop mitnehmen. In beiden Waveforms markiert.
+- **Pads** — acht Pads je Deck in drei Modi (Hot Cue, Loop, Jump), in der App gewählt; die
+  Pads des DDJ-200 folgen, ihre LEDs zeigen gesetzte Cues und lassen den aktiven Loop im Beat
+  blinken.
+- **Beatgrid-Korrektur** — Grid um 10 ms verschieben, Tempo halbieren oder verdoppeln, um
+  0,01 BPM feinjustieren oder eintappen; in der Library gespeichert und sofort im Deck aktiv.
 - **Cue nach Pioneer-Art** — pausiert: Cue-Punkt setzen; auf dem Cue-Punkt halten = vorhören,
   loslassen = zurück; Play beim Halten = weiterspielen; spielend: zurück zum Cue und Pause.
   Shift + Cue springt an den Anfang.
@@ -153,8 +166,7 @@ Hardware reproduzierbar. Der MIDI-Verkehr im Monitor-Screenshot ist simuliert.</
 - **„Über rille“** — Version, Spenden- und Bewerten-Button, Link zum Quellcode; externe Links
   dürfen nur die freigegebenen Adressen öffnen.
 
-**Als Nächstes** — Sync, Hot Cues, Loops und Pads
-(M7), Vorhören im Kopfhörer (M8). Siehe [Roadmap](#%EF%B8%8F-roadmap).
+**Als Nächstes** — Vorhören im Kopfhörer (M8). Siehe [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
 
@@ -171,13 +183,13 @@ Vinyl-Modus und MIDI-Monitor in den Einstellungen.
 | Jog berühren + Teller | Scratch (Vinyl-Modus); ohne Vinyl-Modus Pitch-Bend | Schneller Suchlauf | ✅ |
 | Jog-Rand | Pitch-Bend | Library-Navigation | ✅ |
 | Tempo-Fader | Tempo (oben langsamer, wie aufgedruckt), Soft-Takeover | — | ✅ |
-| Beat Sync | kurz: Sync · lang: Sync-Lock | Tempo-Bereich wechseln (±6/10/16 %/Wide) | M7 / ✅ |
+| Beat Sync | kurz: Sync · lang: Sync-Lock (LED = Lock) | Tempo-Bereich wechseln (±6/10/16 %/Wide) | ✅ |
 | EQ Hi / Mid / Low | 3-Band-Isolator | — | ✅ |
 | CFX | Bipolares Filter (links Lowpass, rechts Highpass) | — | ✅ |
 | Kopfhörer-Cue | Kanal vorhören | Markierten Track laden | M8 / ✅ |
 | Master Cue | Master im Kopfhörer | — | M8 |
 | Transition FX | Echo-Out / Filter-Out aufs lautere spielende Deck; nochmal = abbrechen | Effekt wechseln | ✅ |
-| Pads 1–8 | Hot Cue / Beat Loop / Beat Jump | Löschen / Loop verlassen | M7 |
+| Pads 1–8 | Hot Cue / Beat Loop (¼–32) / Beat Jump (oben zurück ½·1·4·16, unten vor), Modus in der App | Cue löschen / Loop verlassen | ✅ |
 
 **Wie der Controller angebunden ist**
 
@@ -213,6 +225,9 @@ Alles funktioniert auch ohne Controller:
 | Track laden | Audiodatei aus dem Finder auf ein Deck ziehen, oder eine Library-Zeile (ziehen, Doppelklick) |
 | Springen | In die Übersichts-Waveform unter der Zeit klicken |
 | Waveform-Zoom | Mausrad über der Detail-Waveform, oder sie fokussieren und + / − drücken |
+| Sync | SYNC (einmalig) und LOCK (dauerhaft) neben Play |
+| Pads | Über den Pads Hot Cue / Loop / Jump wählen; Pad klicken; Shift + Klick löscht einen Cue bzw. verlässt den Loop |
+| Beatgrid | GRID neben den BPM: ◀ ▶ verschieben, ÷2 ×2, ±0,01 BPM, TAP im Takt |
 | Musik importieren | „Ordner importieren“, oder einen Ordner auf die Library ziehen |
 | Library | Suchfeld (↓ / Enter springt in die Liste); in der Liste ↑ ↓, Bild ↑ ↓, Pos1 / Ende; Enter = erstes leeres Deck, `1` / `2` = Deck 1 / 2; Spaltenkopf klicken sortiert |
 | Play/Pause, Cue | Klicken, oder Knopf fokussieren und Leertaste / Enter (Cue: halten = vorhören) |
@@ -350,12 +365,12 @@ CI committet neue Zahlen, sobald sie sich ändern.
 
 | Suite | Wo | Schwerpunkte |
 |---|---|---|
-| Rust Unit + Integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | Cue-Zustandsmaschine, Kennlinien, Glättung, Declick, Pegel, gemessene EQ-/Filter-Frequenzgänge, Keylock-Tonhöhe und -Laufzeit bei ±16 % (Nulldurchgänge), Keylock-Ausrichtung am Abspielkopf, keine Lücke nach Sprüngen bei jedem Tempo, Reverse, Scratch, Bend, Suchlauf, Decoder-Randfälle, jede PDF-Zeile des DDJ-200, 14 Bit/Jog/Shift, Soft-Takeover inkl. Reconnect und schneller Fader-Züge, progressives Laden (der Leser sieht nie Unveröffentlichtes), BPM auf synthetischen Mustern (Kicks bei 90–174 BPM, Swing, offene Hi-Hats, Breakdown, Tempo-Drift eines Live-Schlagzeugers) und Ablehnungen (Stille, Rauschen, Zufallsschläge), Peaks-Format, Datenbank-Migrationen, Import → Analyse → Peaks durchgehend |
+| Rust Unit + Integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | Cue-Zustandsmaschine, Kennlinien, Glättung, Declick, Pegel, gemessene EQ-/Filter-Frequenzgänge, Keylock-Tonhöhe und -Laufzeit bei ±16 % (Nulldurchgänge), Keylock-Ausrichtung am Abspielkopf, Sync bei ×½/×2 und Bereichswechsel, Sync-Lock hält die Phase 30 s lang bei Tempowechseln des Leaders, Loops framegenau bei jedem Tempo, keine Lücke nach Sprüngen bei jedem Tempo, Reverse, Scratch, Bend, Suchlauf, Decoder-Randfälle, jede PDF-Zeile des DDJ-200, 14 Bit/Jog/Shift, Soft-Takeover inkl. Reconnect und schneller Fader-Züge, progressives Laden (der Leser sieht nie Unveröffentlichtes), BPM auf synthetischen Mustern (Kicks bei 90–174 BPM, Swing, offene Hi-Hats, Breakdown, Tempo-Drift eines Live-Schlagzeugers) und Ablehnungen (Stille, Rauschen, Zufallsschläge), Peaks-Format, Datenbank-Migrationen, Import → Analyse → Peaks durchgehend |
 | Allokations-Wächter | `crates/rille-engine/tests/no_alloc.rs` | 2.000 Blöcke unter `assert_no_alloc` inkl. Tempo, Keylock, Scratch und Reverse, plus Gegenprobe mit absichtlicher Allokation |
 | C++-Allokations-Wächter | `crates/rille-engine/tests/stretch_alloc.rs` | Signalsmith Stretch `process`/`reset`/`seek` bei wechselnden Raten über den `malloc_logger`-Haken, mit Gegenprobe |
 | CoreMIDI-Rundweg | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtueller DDJ-200 → Port → Decoder → Aktion, und LEDs zurück |
 | Frontend (Vitest) | `src/**/*.test.ts`, `scripts`, `tools` | Peaks-Format (bytegleich mit Rust), Zoomstufen-Wahl, Beat-Positionen, Library-Suche/-Sortierung/-Auswahl, Store und Lade-Rennen, Positions-Fortschreibung, Token-Gleichstand und Kontrast, „keine Rohwerte“-Wächter |
-| E2E (Playwright) | `e2e/` | Waveforms gezeichnet (am Screenshot geprüft), kein Zeichnen im Leerlauf, Klick-zum-Springen, Zoom, Restzeit-Warnung mit und ohne reduzierte Bewegung, Library-Import mit Fortschritt, virtualisierte Liste, Suche, Sortierung, Laden per Tastatur, Ziehen aufs Deck, Laden, Play, Cue, Auswerfen, Tastaturbedienung, Fader, Tempo-Bereich und -Anzeige, Keylock, Reverse und Bend beim Halten, Layout bei 1024×680, Einstellungen, Controller-UI — gegen das Mock-Backend |
+| E2E (Playwright) | `e2e/` | Hot Cues, Loops, Beat Jump, Sync und Lock, Grid-Editor und Tap, Decks passen bei 1024×680–1440×900 über die Library, Waveforms gezeichnet (am Screenshot geprüft), kein Zeichnen im Leerlauf, Klick-zum-Springen, Zoom, Restzeit-Warnung mit und ohne reduzierte Bewegung, Library-Import mit Fortschritt, virtualisierte Liste, Suche, Sortierung, Laden per Tastatur, Ziehen aufs Deck, Laden, Play, Cue, Auswerfen, Tastaturbedienung, Fader, Tempo-Bereich und -Anzeige, Keylock, Reverse und Bend beim Halten, Layout bei 1024×680, Einstellungen, Controller-UI — gegen das Mock-Backend |
 
 Praxis: Clippy mit `-D warnings`, `unwrap`/`expect`/`panic` außerhalb von Tests verboten, neue
 Wächter werden per Mutationsprobe geprüft (einmal gegen absichtlich kaputten Code laufen lassen,
@@ -395,7 +410,7 @@ rille/
 | M4 | Tempo-Bereiche, Keylock (Signalsmith Stretch), Pitch-Bend, Scratch, Reverse | ✅ (Jog-Kalibrierung bei der Hardware-Abnahme) |
 | M5 | Library: Import, SQLite, BPM-/Beatgrid-Analyse, Suche, Drag & Drop | ✅ |
 | M6 | Waveforms (Übersicht + scrollende Detailansicht, Frequenzfarben), Deck-Oberfläche | ✅ |
-| M7 | Sync & Sync-Lock, Hot Cues, Beat Loops, Beat Jump, Pad-Modi | ⏳ |
+| M7 | Sync & Sync-Lock, Hot Cues, Beat Loops, Beat Jump, Pad-Modi | ✅ (Hardware-Abnahme offen) |
 | M8 | Vorhören über ein zweites Gerät oder ein 4-Kanal-Interface | ⏳ |
 | M9 | Vollständige Tastatursteuerung, helles Theme, Leerzustände, gemessene Budgets | ⏳ |
 

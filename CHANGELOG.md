@@ -7,6 +7,12 @@ All notable changes to rille are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- M7 beat features: sync (tempo ×½/×1/×2 with range widening, phase), sync lock (tempo follow
+  plus a phase correction of at most 2 % speed), beat loops ¼–32 beats exact to the frame at
+  any tempo, beat jump ±½/1/4/16 (moves a running loop), eight hot cues per deck snapped to the
+  beat and saved in the library (schema v3), beatgrid correction (move, ÷2, ×2, ±0.01 BPM,
+  tap). Pads in three modes in the app and on the DDJ-200 with LEDs (cues lit, active loop
+  blinking with the beat), sync LED shows the lock, tempo set by sync goes to soft takeover.
 - M6 waveforms: scrolling detail view in WebGL2 (one draw call; peaks as textures per zoom
   level, beatgrid in the shader, played part dimmed) with zoom 2–32 s by mouse wheel or + / −,
   and a Canvas2D overview with played part, cue mark and click-to-seek. Three bands in shades
@@ -58,6 +64,10 @@ All notable changes to rille are documented here. The format follows
 - Track loading no longer decodes the whole file first (was ~360 ms for a 3:43 MP3).
 
 ### Fixed
+- Since M6 the decks were taller than the stage below ~880 px window height and covered the
+  top of the library; they now grow denser there (sizes from tokens), checked at 1024×680,
+  1280×800 and 1440×900.
+- Quick arrow presses on the overview built on the position before the previous seek.
 - Waveforms (review of M6): a trackpad swipe zooms step by step instead of racing to the end;
   a track without a waveform says why (analysis failed, no library) instead of "wird
   berechnet" forever; a file changed on disk and loaded again gets a fresh analysis; peaks that

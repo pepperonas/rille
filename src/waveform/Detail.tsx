@@ -95,7 +95,10 @@ export function Detail({ deck, peaks, bpm, firstBeat }: Props) {
     const d = frame?.decks[i];
     if (!r || !frame || !d || frame.sampleRate <= 0) return;
     const pos = positionAt(d, frame.sampleRate, receivedAt, now);
+    const sr = frame.sampleRate;
     r.draw({
+      loop: d.loopRange ? [d.loopRange[0] / sr, d.loopRange[1] / sr] : null,
+      cues: d.hotCues.map((c) => (c === null ? null : c / sr)),
       center: pos / frame.sampleRate,
       duration: d.frames / frame.sampleRate,
       secondsVisible: seconds,
@@ -104,10 +107,11 @@ export function Detail({ deck, peaks, bpm, firstBeat }: Props) {
     });
     countDraw();
   });
-  // While paused, redraw on seek; zoom, peaks, size and restores re-render through state.
+  // While paused, redraw on seek, new cues or a loop; zoom, peaks, size and restores
+  // re-render through state.
   useAppState((s) => {
     const d = s.frame?.decks[i];
-    return d && !d.playing ? d.position : -1;
+    return d && !d.playing ? `${d.position}|${d.hotCues.join()}|${d.loopRange?.join() ?? ''}` : '';
   });
 
   // Trackpads send a stream of small deltas (with inertia): accumulate, one step per notch.
