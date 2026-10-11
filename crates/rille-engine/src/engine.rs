@@ -1770,6 +1770,54 @@ mod tests {
     }
 
     #[test]
+    fn leaving_a_loop_shorter_than_the_keylock_lead_keeps_audio_on_the_playhead() {
+        // 1/16 beat = 1500 frames, shorter than the stretcher's lead: the feed is whole passes
+        // ahead of the playhead. Leaving the loop must not hand the stretcher's input over as
+        // track (it would play `m` loop lengths off the playhead from then on).
+        for phase in 0..12 {
+            let (mut engine, mut h) = engine_pair(SR, 256);
+            let load = TrackLoad {
+                grid: Some(BeatGrid {
+                    bpm: 120.0,
+                    first_beat: 0.0,
+                }),
+                ..TrackLoad::new(DeckId::A, rich_track(30))
+            };
+            assert!(h.load_track(load).is_ok());
+            h.send(deck_a(DeckCommand::Keylock(true)));
+            h.send(deck_a(DeckCommand::Tempo(0.5)));
+            h.send(deck_a(DeckCommand::Seek {
+                frame: 5 * u64::from(SR),
+            }));
+            h.send(deck_a(DeckCommand::Play));
+            h.send(mix(MixerCommand::Crossfader(0.0)));
+            settle(&mut engine);
+            let lead = engine.decks[0].player.keylock_lead().unwrap();
+            assert!(
+                lead > 1500.0,
+                "the case needs a lead longer than the loop: {lead}"
+            );
+            let mut prev = 0.0;
+            largest_step(&mut engine, 1, &mut prev);
+            let steady = largest_step(&mut engine, 8, &mut prev);
+            h.send(deck_a(DeckCommand::BeatLoop(0.0625)));
+            largest_step(&mut engine, 20 + phase, &mut prev);
+            h.send(deck_a(DeckCommand::LoopExit));
+            // Long enough for the stretcher to play out everything fed before the exit.
+            let step = largest_step(&mut engine, 60, &mut prev);
+            assert!(
+                step <= steady * 1.5,
+                "phase {phase}: step {step} vs steady {steady}"
+            );
+            let after = engine.decks[0].player.keylock_lead().unwrap();
+            assert!(
+                (after - lead).abs() < 1.0,
+                "phase {phase}: lead {after} vs {lead}"
+            );
+        }
+    }
+
+    #[test]
     fn xruns_show_up_in_the_snapshot() {
         let (mut engine, mut h) = engine_pair(SR, 256);
         engine.note_xrun();

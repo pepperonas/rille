@@ -99,8 +99,11 @@ Das Frontend rechnet nichts Audio-Relevantes.
   ein Sprung über das Ende hinaus verlässt den Loop (`apply_deck`).
 - **Keylock-Loops** laufen ohne Neustart: der Stretcher bekommt den Loop als einen Strom
   (`feed_loop`, `stream_frame` – nach dem Loop-Ende wieder der Loop-Anfang, Naht über 4 ms
-  überblendet), `Player::loop_wrap` versetzt dann nur den Abspielkopf. `feed`/`bridge_pos`
-  zählen dabei im *Strom*, nicht im Track. Ein Loop, den der Feed schon überholt hat, oder
+  überblendet), `Player::loop_wrap` versetzt dann nur den Abspielkopf. `feed`/`bridge_pos`/`play_stream`
+  zählen dabei im *Strom*, nicht im Track. Ob der Stretcher beim Verlassen/Ändern weiterlaufen
+  darf, entscheidet der *Durchlauf* im Strom (`stream_pass` von Feed und `play_stream` gleich) –
+  ein Vergleich der Track-Positionen täuscht bei Loops kürzer als der Vorlauf (⅛ Beat und
+  kürzer), der Feed ist dann ganze Durchläufe voraus. Ein Loop, den der Feed schon überholt hat, oder
   einer, der sich ändert, während der Feed bereits im nächsten Durchlauf ist, fällt auf den
   alten Weg zurück (ausblenden, neu ansetzen). Pitch-Tests messen die Frequenz direkt hinter
   der Naht – die Varispeed-Brücke hätte dort die Tonhöhe des Tempos.

@@ -100,6 +100,9 @@ pub struct Player {
     /// virtual stream that runs on past the loop end into the loop start again, so the
     /// stretcher plays through every pass instead of restarting at the seam.
     feed_loop: Option<(u64, u64)>,
+    /// The playhead in the same stream coordinates as `feed` (it advances with the feed and
+    /// does not move at a loop wrap). `feed - play_stream` is the stretcher's lead.
+    play_stream: f64,
     /// `feed_loop` of a stretcher that is fading out.
     fade_loop: Option<(u64, u64)>,
 }
@@ -147,13 +150,13 @@ fn stream_frame(track: &TrackAudio, lp: Option<(u64, u64)>, seam: usize, i: i64)
     }
 }
 
-/// Where position `f` of a looped stream lies in the track.
-fn stream_to_track(lp: Option<(u64, u64)>, f: f64) -> f64 {
+/// Which pass of a looped stream position `f` is in (0 = before the first seam).
+fn stream_pass(lp: Option<(u64, u64)>, f: f64) -> i64 {
     match lp {
         Some((start, end)) if end > start && f >= end as f64 => {
-            start as f64 + (f - end as f64).rem_euclid((end - start) as f64)
+            ((f - end as f64) / (end - start) as f64).floor() as i64 + 1
         }
-        _ => f,
+        _ => 0,
     }
 }
 
@@ -251,6 +254,7 @@ impl Player {
             fade_rate: 0.0,
             loop_range: None,
             feed_loop: None,
+            play_stream: 0.0,
             fade_loop: None,
         }
     }
@@ -303,6 +307,13 @@ impl Player {
         self.scratching || self.bend_hold != 0 || self.bend.target() != 0.0
     }
 
+    /// The stretcher's lead over the playhead in stream frames (tests: it must not change while
+    /// keylock plays on).
+    #[cfg(test)]
+    pub(crate) fn keylock_lead(&self) -> Option<f64> {
+        self.keylock_engaged.then_some(self.feed - self.play_stream)
+    }
+
     /// Keylock output is sounding or still fading out. The engine's declick then leaves the
     /// fade-out to the player: a tail read from the raw track would not match what was heard.
     pub fn owns_fade_out(&self) -> bool {
@@ -329,13 +340,19 @@ impl Player {
         }
         self.loop_range = lp;
         if self.feed_loop.is_some() && self.feed_loop != lp {
-            // The stretcher holds input built with the old loop. Still in the same pass (the
-            // feed has not wrapped ahead of the playhead), that input is plain track and the
-            // stretcher plays on; otherwise it fades out and re-engages.
-            let f = stream_to_track(self.feed_loop, self.feed);
-            if self.keylock_engaged && f >= self.playhead {
-                self.feed = f;
-                self.bridge_pos = stream_to_track(self.feed_loop, self.bridge_pos);
+            // The stretcher holds input built with the old loop. If the feed is still in the
+            // playhead's pass (no seam between them), that input is plain track from the
+            // playhead on and the stretcher plays on; otherwise it fades out and re-engages.
+            // Compared in stream coordinates: with a loop shorter than the lead the feed can
+            // be whole passes ahead while its track position merely looks ahead.
+            if self.keylock_engaged
+                && stream_pass(self.feed_loop, self.feed)
+                    == stream_pass(self.feed_loop, self.play_stream)
+            {
+                let shift = self.playhead - self.play_stream;
+                self.feed += shift;
+                self.bridge_pos += shift;
+                self.play_stream = self.playhead;
                 self.feed_loop = None;
             } else {
                 self.leave_keylock();
@@ -347,7 +364,6 @@ impl Player {
             && self.feed_loop.is_none()
             && end > start
             && self.feed < end as f64
-            && self.bridge_pos < end as f64
         {
             self.feed_loop = lp;
         }
@@ -364,11 +380,12 @@ impl Player {
             return false;
         }
         self.playhead = to;
-        // Keep the stream positions small: one pass back maps to the same audio while it stays
-        // past the loop end.
+        // Keep the stream positions small: one pass back maps to the same audio while every
+        // position stays past the loop end (`bridge_pos` trails the feed, the playhead too).
         let len = (end - start) as f64;
-        while self.feed - len >= end as f64 && self.bridge_pos - len >= end as f64 {
+        while self.play_stream - len >= end as f64 && self.bridge_pos - len >= end as f64 {
             self.feed -= len;
+            self.play_stream -= len;
             self.bridge_pos -= len;
         }
         true
@@ -626,6 +643,7 @@ impl Player {
         self.keylock_engaged = true;
         self.since_engage = 0;
         self.bridge_pos = self.playhead;
+        self.play_stream = self.playhead;
     }
 
     fn render_keylock(&mut self, track: &TrackAudio, out: &mut [f32]) -> Boundaries {
@@ -690,6 +708,7 @@ impl Player {
         }
         self.since_engage = self.since_engage.saturating_add(frames);
         self.feed += advance;
+        self.play_stream += advance;
         self.playhead += advance;
         let end = track.frames() as f64;
         let mut hit = Boundaries::default();
