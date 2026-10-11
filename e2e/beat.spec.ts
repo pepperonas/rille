@@ -106,6 +106,13 @@ test('the beatgrid editor halves, doubles and taps the tempo', async ({ page }) 
   await expect(a.getByLabel('Track-Tempo')).toHaveText('244.0 BPM');
   await panel.getByRole('button', { name: 'Tempo halbieren' }).click();
   await expect(a.getByLabel('Track-Tempo')).toHaveText('122.0 BPM');
+  // Two quick clicks count twice, although the library echoes only every 250 ms.
+  await panel.getByRole('button', { name: 'Tempo halbieren' }).click();
+  await panel.getByRole('button', { name: 'Tempo halbieren' }).click();
+  await expect(a.getByLabel('Track-Tempo')).toHaveText('30.5 BPM');
+  await panel.getByRole('button', { name: 'Tempo verdoppeln' }).click();
+  await panel.getByRole('button', { name: 'Tempo verdoppeln' }).click();
+  await expect(a.getByLabel('Track-Tempo')).toHaveText('122.0 BPM');
   await panel.getByRole('button', { name: 'Tempo +0,01 BPM' }).click();
   await expect(a.getByLabel('Track-Tempo')).toHaveText('122.0 BPM'); // shown with one decimal
   // Tapping sets the tempo the taps had (browser clicks are not metronome-exact: ±15 %).

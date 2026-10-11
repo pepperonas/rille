@@ -16,6 +16,11 @@ export function positionAt(
   if (!deck.playing || sampleRate <= 0 || !Number.isFinite(deck.rate)) return deck.position;
   const elapsed = Math.min(Math.max(now - receivedAt, 0), MAX_EXTRAPOLATION_MS) / 1000;
   const pos = deck.position + elapsed * sampleRate * deck.rate;
+  // A loop wraps the playhead, as the engine will do before the next frame arrives.
+  const loop = deck.loopRange;
+  if (loop && deck.rate > 0 && deck.position < loop[1] && pos >= loop[1]) {
+    return loop[0] + ((pos - loop[1]) % Math.max(1, loop[1] - loop[0]));
+  }
   return Math.min(deck.frames, Math.max(0, pos));
 }
 

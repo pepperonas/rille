@@ -64,6 +64,14 @@ All notable changes to rille are documented here. The format follows
 - Track loading no longer decodes the whole file first (was ~360 ms for a 3:43 MP3).
 
 ### Fixed
+- Beat features (review of M7): a jump past an active loop (hot cue, cue, seek) leaves the
+  loop instead of landing somewhere inside it; loops that would reach the track end are not
+  made (the track used to stop with the loop still shown); a beat jump never pushes a loop off
+  the track or shrinks it; a loop pressed just before a beat starts on that beat; SYNC on a
+  paused deck matches the tempo but keeps the cue position; unloading releases sync lock; a
+  corrected or tapped grid survives re-analysis (schema v4); quick grid-editor clicks all
+  count; hot cues no longer drift by a frame per save; soft takeover sees tempo changes made
+  by sync shortly after the fader was touched.
 - Since M6 the decks were taller than the stage below ~880 px window height and covered the
   top of the library; they now grow denser there (sizes from tokens), checked at 1024×680,
   1280×800 and 1440×900.

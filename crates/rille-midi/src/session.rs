@@ -118,6 +118,11 @@ impl ControllerSession {
         }
     }
 
+    /// Last physical position of an absolute control, picked up or not.
+    pub fn hardware_position(&self, key: TakeoverKey) -> Option<f32> {
+        self.takeover.get(&key).and_then(|t| t.hardware())
+    }
+
     /// Physical position of a control that has not been picked up yet (for a UI hint).
     pub fn pending_pickup(&self, key: TakeoverKey) -> Option<f32> {
         self.takeover

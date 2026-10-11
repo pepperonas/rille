@@ -228,8 +228,10 @@ export function createMockBackend(): Backend {
       if (d.syncLock && other?.playing) syncTo(d, other, true);
       d.rate = mockRate(d);
       if (d.playing) {
+        const before = d.position;
         d.position = Math.max(0, Math.min(d.frames, d.position + frames * d.rate));
-        if (d.loopRange && !d.reverse && d.position >= d.loopRange[1]) {
+        // Only crossing the loop end loops back (a jump beyond it has left the loop).
+        if (d.loopRange && !d.reverse && before < d.loopRange[1] && d.position >= d.loopRange[1]) {
           const [start, end] = d.loopRange;
           d.position = start + ((d.position - end) % Math.max(1, end - start));
         }
@@ -301,6 +303,7 @@ export function createMockBackend(): Backend {
       'reverse',
     ];
     if (d.frames === 0 && !settings.includes(action.type)) return;
+    const before = d.position;
     switch (action.type) {
       case 'play':
         d.previewing = false;
@@ -346,7 +349,7 @@ export function createMockBackend(): Backend {
       case 'unload': {
         // Tempo, range and keylock stay with the deck, like on a CDJ.
         const { tempo, tempoRange, keylock } = d;
-        Object.assign(d, emptyDeck(), { tempo, tempoRange, keylock });
+        Object.assign(d, emptyDeck(), { tempo, tempoRange, keylock }); // sync lock goes
         break;
       }
       case 'tempo':
@@ -383,17 +386,18 @@ export function createMockBackend(): Backend {
         const len = action.beats * beatFrames(d.grid, RATE);
         if (d.loopRange) {
           const [start, end] = d.loopRange;
-          d.loopRange =
-            Math.abs(end - start - len) < 1 ? null : [start, Math.min(d.frames, start + len)];
+          if (Math.abs(end - start - len) < 1) d.loopRange = null;
+          else if (start + len < d.frames) {
+            d.loopRange = [start, start + len];
+            if (d.position >= start + len) d.position = start + ((d.position - start) % len);
+          }
           break;
         }
         const step = Math.min(1, action.beats);
-        const start = frameOfBeat(
-          d.grid,
-          Math.floor(beatAt(d.grid, d.position, RATE) / step) * step,
-          RATE,
-        );
-        d.loopRange = [Math.max(0, start), Math.min(d.frames, start + len)];
+        const at = beatAt(d.grid, d.position, RATE) / step;
+        const n = at - Math.floor(at) > 0.875 ? Math.ceil(at) : Math.floor(at);
+        const start = Math.max(0, frameOfBeat(d.grid, n * step, RATE));
+        if (start + len < d.frames) d.loopRange = [start, start + len];
         break;
       }
       case 'loopExit':
@@ -403,9 +407,12 @@ export function createMockBackend(): Backend {
         if (!d.grid) break;
         const delta = action.beats * beatFrames(d.grid, RATE);
         const to = Math.max(0, Math.min(d.frames - 1, d.position + delta));
-        const moved = to - d.position;
+        if (d.loopRange) {
+          const [start, end] = [d.loopRange[0] + delta, d.loopRange[1] + delta];
+          if (start < 0 || end > d.frames - 1) break; // would push the loop off the track
+          d.loopRange = [start, end];
+        }
         d.position = to;
-        if (d.loopRange) d.loopRange = [d.loopRange[0] + moved, d.loopRange[1] + moved];
         break;
       }
       case 'hotCue': {
@@ -420,6 +427,11 @@ export function createMockBackend(): Backend {
         if (action.slot < d.hotCues.length) d.hotCues[action.slot] = null;
         break;
     }
+    // Jumping out of a loop leaves it, as in the engine.
+    if (d.loopRange && d.position !== before) {
+      const [start, end] = d.loopRange;
+      if (d.position < start || d.position >= end) d.loopRange = null;
+    }
     d.rate = mockRate(d);
   }
 
@@ -432,7 +444,7 @@ export function createMockBackend(): Backend {
     if (!f || !t) return;
     d.tempoRange = t.range;
     d.tempo = t.tempo;
-    if (!phase) return;
+    if (!phase || !d.playing) return;
     const error = wrapHalf(
       beatAt(d.grid, d.position, RATE) -
         beatAt(other.grid, other.position, RATE) * f.beatsPerTargetBeat,
@@ -658,7 +670,8 @@ export function createMockBackend(): Backend {
         firstBeat: grid?.firstBeat ?? null,
       };
       library = library.map((x) => (x.id === id ? changed : x));
-      emit('library-tracks', [changed]);
+      // The real library sends its events in batches every 250 ms.
+      setTimeout(() => emit('library-tracks', [changed]), 250);
       for (const d of decks) if (d.libraryId === id) d.grid = grid;
     },
     async setVinylMode(on) {

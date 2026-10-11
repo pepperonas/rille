@@ -8,6 +8,8 @@ import styles from './GridEditor.module.css';
 
 /** Seconds the grid moves per arrow press. */
 const SHIFT_STEP = 0.01;
+/** Longer than the library's event flush (250 ms): until then the prop may still be old. */
+const ECHO_MS = 600;
 
 interface Props {
   deck: Deck;
@@ -21,6 +23,12 @@ export function GridEditor({ deck, libraryId, grid }: Props) {
   const [open, setOpen] = useState(false);
   const [taps, setTaps] = useState<number[]>([]);
   const root = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  // The grid as last sent: the library echoes changes only every 250 ms, so quick clicks must
+  // build on what was sent, not on the (still old) prop.
+  const sent = useRef<{ grid: Grid; at: number } | null>(null);
+  const base = (): Grid | null =>
+    sent.current && performance.now() - sent.current.at < ECHO_MS ? sent.current.grid : grid;
   const label = deck === 'a' ? 'Deck 1' : 'Deck 2';
 
   useEffect(() => {
@@ -32,8 +40,20 @@ export function GridEditor({ deck, libraryId, grid }: Props) {
     return () => window.removeEventListener('pointerdown', close);
   }, [open]);
 
-  const save = (g: Grid) =>
-    backend.setGrid(libraryId, g.bpm, g.firstBeat).catch((e: unknown) => console.error('grid', e));
+  useEffect(() => {
+    if (open) panel.current?.querySelector('button')?.focus();
+  }, [open]);
+
+  const save = (g: Grid) => {
+    sent.current = { grid: g, at: performance.now() };
+    return backend
+      .setGrid(libraryId, g.bpm, g.firstBeat)
+      .catch((e: unknown) => console.error('grid', e));
+  };
+  const edit = (change: (g: Grid) => Grid) => {
+    const g = base();
+    if (g) void save(change(g));
+  };
 
   const tap = () => {
     const now = performance.now();
@@ -63,6 +83,7 @@ export function GridEditor({ deck, libraryId, grid }: Props) {
       </button>
       {open && (
         <div
+          ref={panel}
           className={styles.panel}
           role="dialog"
           aria-label={`Beatgrid ${label}`}
@@ -72,46 +93,42 @@ export function GridEditor({ deck, libraryId, grid }: Props) {
             <div className={styles.row}>
               <button
                 type="button"
-                onClick={() => void save(shiftGrid(grid, -SHIFT_STEP))}
+                onClick={() => edit((g) => shiftGrid(g, -SHIFT_STEP))}
                 aria-label="Grid früher"
               >
                 ◀
               </button>
               <button
                 type="button"
-                onClick={() => void save(shiftGrid(grid, SHIFT_STEP))}
+                onClick={() => edit((g) => shiftGrid(g, SHIFT_STEP))}
                 aria-label="Grid später"
               >
                 ▶
               </button>
               <button
                 type="button"
-                onClick={() => void save(scaleGrid(grid, 0.5))}
+                onClick={() => edit((g) => scaleGrid(g, 0.5))}
                 aria-label="Tempo halbieren"
               >
                 ÷2
               </button>
               <button
                 type="button"
-                onClick={() => void save(scaleGrid(grid, 2))}
+                onClick={() => edit((g) => scaleGrid(g, 2))}
                 aria-label="Tempo verdoppeln"
               >
                 ×2
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  void save({ ...grid, bpm: Math.round((grid.bpm - 0.01) * 100) / 100 })
-                }
+                onClick={() => edit((g) => ({ ...g, bpm: Math.round((g.bpm - 0.01) * 100) / 100 }))}
                 aria-label="Tempo −0,01 BPM"
               >
                 −.01
               </button>
               <button
                 type="button"
-                onClick={() =>
-                  void save({ ...grid, bpm: Math.round((grid.bpm + 0.01) * 100) / 100 })
-                }
+                onClick={() => edit((g) => ({ ...g, bpm: Math.round((g.bpm + 0.01) * 100) / 100 }))}
                 aria-label="Tempo +0,01 BPM"
               >
                 +.01

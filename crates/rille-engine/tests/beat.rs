@@ -262,15 +262,129 @@ fn the_loop_seam_lands_on_the_exact_frame() {
 }
 
 #[test]
-fn a_loop_past_the_track_end_stops_at_the_end() {
+fn a_loop_that_would_reach_the_track_end_is_not_made() {
+    // The track would end instead of looping: no loop, playing on (an outro loop fits earlier).
     let g = grid(120.0, 0.0);
     let mut rig = Rig::new(g, g);
     rig.seek(DeckId::A, 119.0);
     rig.send(DeckId::A, DeckCommand::BeatLoop(8.0));
     rig.run(0.01);
-    let (start, end) = rig.snap().decks[0].loop_range.unwrap();
-    assert_eq!(end, 120 * u64::from(SR));
-    assert_eq!(start, 119 * u64::from(SR));
+    assert_eq!(rig.snap().decks[0].loop_range, None);
+    rig.seek(DeckId::A, 110.0);
+    rig.send(DeckId::A, DeckCommand::BeatLoop(8.0));
+    rig.run(0.01);
+    let sr = u64::from(SR);
+    assert_eq!(rig.snap().decks[0].loop_range, Some((110 * sr, 114 * sr)));
+    // Doubling up to 32 beats would pass the end: the loop stays as it is.
+    rig.send(DeckId::A, DeckCommand::BeatLoop(32.0));
+    rig.run(0.01);
+    assert_eq!(rig.snap().decks[0].loop_range, Some((110 * sr, 114 * sr)));
+}
+
+#[test]
+fn jumping_out_of_a_loop_leaves_it_and_lands_where_asked() {
+    let g = grid(120.0, 0.0);
+    let mut rig = Rig::new(g, g);
+    let sr = u64::from(SR);
+    rig.seek(DeckId::A, 60.0);
+    rig.send(DeckId::A, DeckCommand::HotCue(0)); // cue at 1:00
+    rig.seek(DeckId::A, 20.0);
+    rig.send(DeckId::A, DeckCommand::Play);
+    rig.send(DeckId::A, DeckCommand::BeatLoop(2.0));
+    rig.run(0.5);
+    assert!(rig.snap().decks[0].loop_range.is_some());
+    rig.send(DeckId::A, DeckCommand::HotCue(0));
+    rig.run(0.2);
+    let d = rig.snap().decks[0];
+    assert_eq!(d.loop_range, None, "the hot cue jumped out of the loop");
+    assert!(
+        d.position >= 60 * sr && d.position < 61 * sr,
+        "{}",
+        d.position
+    );
+    // A jump within the loop keeps it.
+    rig.send(DeckId::A, DeckCommand::BeatLoop(4.0));
+    rig.run(0.01);
+    let (start, _) = rig.snap().decks[0].loop_range.unwrap();
+    rig.send(
+        DeckId::A,
+        DeckCommand::Seek {
+            frame: start + 1_000,
+        },
+    );
+    rig.run(0.01);
+    assert!(rig.snap().decks[0].loop_range.is_some());
+}
+
+#[test]
+fn a_loop_press_just_before_the_beat_means_that_beat() {
+    let g = grid(120.0, 0.0);
+    let mut rig = Rig::new(g, g);
+    let sr = u64::from(SR);
+    rig.send(
+        DeckId::A,
+        DeckCommand::Seek {
+            frame: 10 * sr - 1_000,
+        },
+    ); // 21 ms early
+    rig.send(DeckId::A, DeckCommand::BeatLoop(4.0));
+    rig.run(0.01);
+    assert_eq!(rig.snap().decks[0].loop_range, Some((10 * sr, 12 * sr)));
+    rig.send(DeckId::A, DeckCommand::LoopExit);
+    rig.send(
+        DeckId::A,
+        DeckCommand::Seek {
+            frame: 10 * sr - 6_000,
+        },
+    ); // a quarter beat early
+    rig.send(DeckId::A, DeckCommand::BeatLoop(4.0));
+    rig.run(0.01);
+    assert_eq!(
+        rig.snap().decks[0].loop_range,
+        Some((9 * sr + sr / 2, 11 * sr + sr / 2))
+    );
+}
+
+#[test]
+fn a_beat_jump_that_would_push_the_loop_off_the_track_is_not_made() {
+    let g = grid(120.0, 0.0);
+    let mut rig = Rig::new(g, g);
+    let sr = u64::from(SR);
+    rig.seek(DeckId::A, 3.0);
+    rig.send(DeckId::A, DeckCommand::BeatLoop(4.0));
+    rig.send(DeckId::A, DeckCommand::BeatJump(-16.0));
+    rig.run(0.01);
+    let d = rig.snap().decks[0];
+    assert_eq!((d.loop_range, d.position), (Some((3 * sr, 5 * sr)), 3 * sr));
+}
+
+#[test]
+fn sync_while_paused_matches_tempo_but_keeps_the_cue_position() {
+    let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.1));
+    rig.seek(DeckId::A, 10.3);
+    rig.send(DeckId::A, DeckCommand::Play);
+    rig.seek(DeckId::B, 20.0);
+    rig.run(0.2);
+    rig.send(DeckId::B, DeckCommand::Sync);
+    rig.run(0.2);
+    let b = rig.snap().decks[1];
+    assert_eq!(
+        b.position,
+        20 * u64::from(SR),
+        "paused deck stays on its cue"
+    );
+    assert!((f64::from(TempoRange::Ten.rate(b.tempo)) * 124.0 - 120.0).abs() < 0.01);
+}
+
+#[test]
+fn unloading_a_deck_releases_its_sync_lock() {
+    let mut rig = Rig::new(grid(120.0, 0.0), grid(124.0, 0.0));
+    rig.send(DeckId::B, DeckCommand::SyncLock(true));
+    rig.run(0.01);
+    assert!(rig.snap().decks[1].sync_lock);
+    rig.send(DeckId::B, DeckCommand::Unload);
+    rig.run(0.01);
+    assert!(!rig.snap().decks[1].sync_lock);
 }
 
 #[test]

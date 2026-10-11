@@ -399,9 +399,18 @@ impl Worker {
             if (tempo - self.engine_tempo[i]).abs() <= 1e-4 {
                 continue;
             }
-            self.engine_tempo[i] = tempo;
+            // While the fader moves, wait: the change is probably the fader's own (lagging).
+            // Once it rests, any remaining difference came from the engine and is reported.
             let resting = self.tempo_touched[i].is_none_or(|t| t.elapsed() > FADER_REST);
-            if resting {
+            if !resting {
+                continue;
+            }
+            self.engine_tempo[i] = tempo;
+            let from_fader = self
+                .session
+                .hardware_position((Scope::Deck(deck), Control::TempoFader))
+                .is_some_and(|v| (v - crate::dto::tempo_to_fader(tempo)).abs() < 0.005);
+            if !from_fader {
                 self.session.software_changed(
                     (Scope::Deck(deck), Control::TempoFader),
                     crate::dto::tempo_to_fader(tempo),

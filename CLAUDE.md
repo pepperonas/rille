@@ -94,6 +94,11 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - **Loops** teilen den Audioblock an der Loop-Grenze (`Deck::until_loop_end`/`wrap_loop`) und
   tragen den Überhang samt Nachkommaanteil in den nächsten Durchlauf. Audio-Vergleiche über
   Loop-Durchläufe erst ab dem zweiten Durchlauf: der Isolator-EQ ist ein IIR mit Gedächtnis.
+- **Loop-Regel:** nur das *Überschreiten* des Loop-Endes springt zurück (`wrap_loop(from)`);
+  ein Sprung über das Ende hinaus verlässt den Loop (`apply_deck`). Keylock-Loops beginnen jeden
+  Durchlauf mit der Varispeed-Brücke (bekannte Grenze, Plan M7).
+- Vom Nutzer korrigierte Grids (`grid_user`, Schema v4) überschreibt keine Analyse; erst eine
+  geänderte Datei setzt das zurück.
 - `Command` ist 32 Byte groß, seit `SetGrid` zwei `f64` trägt (ein `f32`-Grid driftet).
 - In Playwright „Cue“ immer mit `exact: true` suchen: die Hot-Cue-Pads heißen „Hot Cue n …“.
 - BPM: lieber „kein Tempo“ als ein geratenes. Neue Heuristiken immer gegen Rauschen und

@@ -378,7 +378,7 @@ impl AudioService {
                     hot_cues: request
                         .meta
                         .hot_cues
-                        .map(|c| c.filter(|s| s.is_finite() && *s >= 0.0).map(|s| (s * rate) as u64)),
+                        .map(|c| c.filter(|s| s.is_finite() && *s >= 0.0).map(|s| (s * rate).round() as u64)),
                     ..TrackLoad::new(request.deck, track.clone())
                 });
                 for _ in 0..100 {

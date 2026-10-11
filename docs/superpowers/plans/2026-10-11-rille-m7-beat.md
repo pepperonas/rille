@@ -19,9 +19,12 @@ Raten-Zuschlag (wie Bend, gedeckelt auf ±2 %) ausgeglichen, nie per Sprung. Wä
 Scratch oder Suchlauf ruht die Korrektur. Beide Decks gelockt: das zuletzt gelockte folgt dem
 anderen (Leader bleibt frei). Ziel muss spielen.
 
-**Loops.** Loop = `[start, end)` in Frames. Beat-Loop setzt Start auf den nächstgelegenen Beat
-(ohne Grid: kein Beat-Loop), Länge ¼ … 32 Beats; gleiche Länge noch mal = verlassen, andere
-Länge = Länge ändern (Start bleibt). Beim Rendern wird der Block an der Loop-Grenze geteilt;
+**Loops.** Loop = `[start, end)` in Frames. Beat-Loop startet auf dem Beat (Raster der
+Loop-Länge, höchstens 1 Beat) am oder vor dem Abspielkopf – oder auf dem nächsten, wenn er
+weniger als ⅛ Schritt entfernt ist (ohne Grid: kein Beat-Loop). Länge ¼ … 32 Beats; gleiche
+Länge noch mal = verlassen, andere Länge = Länge ändern (Start bleibt). Ein Loop, der das
+Trackende erreichen würde, wird nicht angelegt bzw. nicht verlängert. Nur das Überschreiten des
+Loop-Endes springt zurück; ein Sprung aus dem Loop heraus (Cue, Hot Cue, Seek) verlässt ihn. Beim Rendern wird der Block an der Loop-Grenze geteilt;
 der Rücksprung ist ein normaler Sprung mit Überblendung (Keylock: Player blendet selbst).
 Beat Jump verschiebt einen aktiven Loop mit.
 
@@ -42,7 +45,7 @@ Snapshot je Deck zusätzlich: `grid`, `hot_cues`, `loop`, `sync_lock`.
 - Ändert die Engine das Tempo (Sync), bekommt der Tempo-Fader neuen Soft-Takeover-Wert.
 
 ## App
-- Je Deck: Sync-Knopf (kurz/lang, oder SYNC + LOCK), Pad-Feld 2×4 mit Modus-Chips,
+- Je Deck: SYNC + LOCK, Pad-Feld 8×1 (passt auch in kurze Fenster) mit Modus-Chips,
   Loop-Anzeige; Hot-Cue-Marken und Loop-Bereich in Übersicht und Detail.
 - Grid-Korrektur: Grid ±10 ms verschieben, BPM ×2 / ÷2, BPM ±0,01, Tap (pure Funktion,
   Ausreißer verworfen). Speichert in der Library und schickt `SetGrid` an Decks mit dem Track.
@@ -56,3 +59,11 @@ Snapshot je Deck zusätzlich: `grid`, `hot_cues`, `loop`, `sync_lock`.
 - Library: Schema v3, Hot Cues speichern/laden, Grid-Korrektur.
 - Frontend: Tap-Tempo, Pad-Belegung je Modus (Vitest); Playwright: Hot Cue setzen/springen,
   Loop an/aus, Beat Jump, Sync, Grid-Korrektur.
+
+## Bekannte Grenzen
+- Mit Keylock beginnt jeder Loop-Durchlauf mit der Varispeed-Brücke (wie nach jedem Sprung),
+  bis der Stretcher wieder eingeschwungen ist; bei Tempo ≠ 0 ist dieser Anfang kurz
+  tonhöhenverschoben. Ein nahtloser Keylock-Loop bräuchte einen Sprung, der den Stretcher
+  weiterlaufen lässt – offen für M9.
+- Sync im Stand gleicht nur das Tempo an (das Ziel läuft bis zum Play ohnehin weiter);
+  die Phase kommt über Sync-Lock, sobald beide spielen.

@@ -11,7 +11,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 use crate::tags::TrackInfo;
 
 /// The schema this build writes.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum DbError {
@@ -165,6 +165,13 @@ impl Library {
                 PRAGMA user_version = 3;",
             )?;
         }
+        if version < 4 {
+            // A grid the user corrected (or tapped) is theirs: analyses leave it alone.
+            tx.execute_batch(
+                "ALTER TABLE tracks ADD COLUMN grid_user INTEGER NOT NULL DEFAULT 0;
+                PRAGMA user_version = 4;",
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -229,8 +236,8 @@ impl Library {
             Some((id, ..)) => {
                 self.conn.execute(
                     "UPDATE tracks SET size = ?2, mtime = ?3, title = ?4, artist = ?5, album = ?6,
-                         duration = ?7, bpm = NULL, first_beat = NULL, analysis = 'pending',
-                         error = NULL
+                         duration = ?7, bpm = NULL, first_beat = NULL, grid_user = 0,
+                         analysis = 'pending', error = NULL
                      WHERE id = ?1",
                     params![
                         id,
@@ -311,8 +318,10 @@ impl Library {
         duration: f64,
     ) -> Result<(), DbError> {
         self.conn.execute(
-            "UPDATE tracks SET bpm = ?2, first_beat = ?3, duration = ?4, analysis = ?5,
-                 error = NULL, analysis_rev = analysis_rev + 1
+            "UPDATE tracks SET
+                 bpm = CASE WHEN grid_user THEN bpm ELSE ?2 END,
+                 first_beat = CASE WHEN grid_user THEN first_beat ELSE ?3 END,
+                 duration = ?4, analysis = ?5, error = NULL, analysis_rev = analysis_rev + 1
              WHERE id = ?1",
             params![
                 id,
@@ -362,7 +371,7 @@ impl Library {
     /// The user corrected the beatgrid (moved it, halved or doubled the tempo, tapped).
     pub fn set_grid(&self, id: i64, grid: Option<BeatGrid>) -> Result<(), DbError> {
         self.conn.execute(
-            "UPDATE tracks SET bpm = ?2, first_beat = ?3 WHERE id = ?1",
+            "UPDATE tracks SET bpm = ?2, first_beat = ?3, grid_user = 1 WHERE id = ?1",
             params![id, grid.map(|g| g.bpm), grid.map(|g| g.first_beat)],
         )?;
         Ok(())
@@ -487,6 +496,24 @@ mod tests {
         };
         lib.set_grid(id, Some(grid)).unwrap();
         assert_eq!(lib.track(id).unwrap().unwrap().grid, Some(grid));
+        // A later analysis (cache cleared, retry) keeps the user's grid …
+        let detected = BeatGrid {
+            bpm: 128.0,
+            first_beat: 0.1,
+        };
+        lib.set_analyzed(id, Some(detected), 300.0).unwrap();
+        assert_eq!(lib.track(id).unwrap().unwrap().grid, Some(grid));
+        lib.set_analyzed(id, None, 300.0).unwrap();
+        assert_eq!(lib.track(id).unwrap().unwrap().grid, Some(grid));
+        // … until the file itself changes.
+        let edited = FileStamp {
+            mtime: STAMP.mtime + 1,
+            ..STAMP
+        };
+        lib.upsert(Path::new("/m/a.mp3"), edited, &info("A"))
+            .unwrap();
+        lib.set_analyzed(id, Some(detected), 300.0).unwrap();
+        assert_eq!(lib.track(id).unwrap().unwrap().grid, Some(detected));
         assert_eq!(lib.hot_cues(9_999).unwrap(), [None; HOT_CUES]);
     }
 

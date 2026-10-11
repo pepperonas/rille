@@ -306,13 +306,16 @@ impl Deck {
         ((ahead / rate).ceil() as usize).clamp(1, max)
     }
 
-    /// Past the loop end while playing forward: back to the start, keeping the overshoot.
-    fn wrap_loop(&mut self) {
+    /// The playhead crossed the loop end while playing forward (it was at `from` before the
+    /// part): back to the start, keeping the overshoot. Only a crossing loops back – a jump
+    /// that lands beyond the loop has already left it (see `apply_deck`).
+    fn wrap_loop(&mut self, from: f64) {
         let Some((start, end)) = self.loop_range else {
             return;
         };
         let pos = self.player.playhead();
-        if !self.transport.playing || self.player.reverse() || pos < end as f64 {
+        let end_f = end as f64;
+        if !self.transport.playing || self.player.reverse() || from >= end_f || pos < end_f {
             return;
         }
         let len = (end - start).max(1) as f64;
@@ -370,9 +373,10 @@ impl Deck {
         let mut ended = false;
         while done < frames {
             let n = self.until_loop_end(frames - done);
+            let from = self.player.playhead();
             ended |= self.render_part(&track, done, n);
             done += n;
-            self.wrap_loop();
+            self.wrap_loop(from);
         }
         self.track = Some(track);
         ended
@@ -669,6 +673,8 @@ impl Engine {
             deck.grid = None;
             deck.hot_cues = [None; HOT_CUES];
             deck.loop_range = None;
+            deck.sync_lock = false;
+            deck.player.set_sync_nudge(0.0);
             let old = deck.track.take();
             self.release(old);
             return;
@@ -711,8 +717,15 @@ impl Engine {
                     deck.transport.frames,
                     self.sample_rate,
                 );
-                // Shortened loop already behind the playhead: back into it.
-                deck.wrap_loop();
+                // Shortened loop already behind the playhead: back to the same place within it.
+                if let Some((start, end)) = deck.loop_range {
+                    let pos = deck.player.playhead();
+                    if pos >= end as f64 {
+                        let len = (end - start).max(1) as f64;
+                        deck.transport.position =
+                            (start as f64 + (pos - start as f64) % len) as u64;
+                    }
+                }
             }
             DeckCommand::LoopExit => deck.loop_range = None,
             DeckCommand::BeatJump(beats) => {
@@ -721,14 +734,21 @@ impl Engine {
                 {
                     let delta = f64::from(beats) * beat::beat_frames(&g, self.sample_rate);
                     let last = deck.transport.frames.saturating_sub(1) as f64;
-                    let to = (deck.player.playhead() + delta).clamp(0.0, last);
-                    let moved = to - deck.player.playhead();
-                    deck.transport.position = to as u64;
-                    // A running loop moves along, so the jump keeps looping the same phrase.
-                    if let Some((start, end)) = deck.loop_range {
-                        let start = (start as f64 + moved).max(0.0) as u64;
-                        let end = (end as f64 + moved).max(0.0) as u64;
-                        deck.loop_range = (end > start).then_some((start, end));
+                    match deck.loop_range {
+                        // A running loop moves along, keeping its length; a jump that would
+                        // push it off the track is not made.
+                        Some((start, end)) => {
+                            let (s, e) = (start as f64 + delta, end as f64 + delta);
+                            if s >= 0.0 && e <= last {
+                                deck.loop_range = Some((s as u64, e as u64));
+                                deck.transport.position =
+                                    (deck.player.playhead() + delta).clamp(0.0, last) as u64;
+                            }
+                        }
+                        None => {
+                            deck.transport.position =
+                                (deck.player.playhead() + delta).clamp(0.0, last) as u64;
+                        }
                     }
                 }
             }
@@ -752,6 +772,13 @@ impl Engine {
         // A jump made by the transport (cue, seek, jump to start) moves the playhead.
         if deck.transport.position != before.position && !matches!(cmd, DeckCommand::Search(_)) {
             deck.player.jump_to(deck.transport.position as f64);
+        }
+        // Jumping out of a loop (cue, hot cue, seek, search) leaves it, like on a CDJ.
+        if let Some((start, end)) = deck.loop_range
+            && deck.transport.position != before.position
+            && !(start..end).contains(&deck.transport.position)
+        {
+            deck.loop_range = None;
         }
         let started = deck.transport.playing && !before.playing;
         deck.declick(before);
@@ -812,7 +839,11 @@ impl Engine {
             return;
         };
         self.set_rate(id, follow.rate);
-        if !self.decks[source.index()].transport.playing {
+        // Phase only between two playing decks: a paused deck stays on its cue (the target
+        // moves on anyway until Play); sync lock pulls the phase in once both play.
+        if !self.decks[source.index()].transport.playing
+            || !self.decks[id.index()].transport.playing
+        {
             return;
         }
         let Some(error) = self.phase_error(id, source, follow) else {
@@ -822,16 +853,7 @@ impl Engine {
         let Some(own) = deck.grid() else { return };
         let to = deck.player.playhead() - error * beat::beat_frames(&own, self.sample_rate);
         let last = deck.transport.frames.saturating_sub(1) as f64;
-        let to = to.clamp(0.0, last);
-        if deck.transport.playing {
-            deck.tail_unheard = false;
-            deck.jump(to);
-        } else {
-            let before = deck.transport;
-            deck.transport.position = to as u64;
-            deck.player.jump_to(to);
-            deck.declick(before);
-        }
+        deck.jump(to.clamp(0.0, last));
     }
 
     fn set_sync_lock(&mut self, id: DeckId, on: bool) {
@@ -991,15 +1013,27 @@ fn beat_loop(
         if ((end - start) as f64 - len).abs() < 1.0 {
             return None;
         }
-        let end = ((start as f64 + len).round() as u64).min(frames);
+        let end = (start as f64 + len).round() as u64;
+        // Too long for the rest of the track: the loop stays as it is.
+        if end >= frames {
+            return current;
+        }
         return (end > start).then_some((start, end));
     }
+    // On the beat (step) at or before the playhead – or the next one, if it is less than ⅛
+    // step away: a press just before the downbeat means the downbeat.
     let step = f64::from(beats.min(1.0));
-    let at = beat::beat_at(&g, playhead, sample_rate);
-    let start = beat::frame_of_beat(&g, (at / step).floor() * step, sample_rate).max(0.0);
-    let end = ((start + len).round() as u64).min(frames);
+    let at = beat::beat_at(&g, playhead, sample_rate) / step;
+    let n = if at - at.floor() > 0.875 {
+        at.ceil()
+    } else {
+        at.floor()
+    };
+    let start = beat::frame_of_beat(&g, n * step, sample_rate).max(0.0);
+    let end = (start + len).round() as u64;
     let start = start.round() as u64;
-    (end > start).then_some((start, end))
+    // The loop end must lie before the last frame, or the track would end instead of looping.
+    (end > start && end < frames).then_some((start, end))
 }
 
 #[cfg(test)]

@@ -158,3 +158,17 @@ describe('endingSoon', () => {
     expect(endingSoon({ ...base, frames: 0 }, 0, 48_000)).toBe(false);
   });
 });
+
+describe('positionAt with a loop', () => {
+  it('wraps at the loop end like the engine', () => {
+    const d = deck({ position: 47_000, loopRange: [24_000, 48_000] });
+    // 50 ms later = 2400 frames: 1400 past the end.
+    expect(positionAt(d, 48_000, 0, 50)).toBe(25_400);
+    // Before the end nothing changes.
+    expect(positionAt(d, 48_000, 0, 10)).toBe(47_480);
+    // Outside the loop (it was jumped past) there is no wrap.
+    expect(positionAt(deck({ position: 50_000, loopRange: [24_000, 48_000] }), 48_000, 0, 50)).toBe(
+      52_400,
+    );
+  });
+});
