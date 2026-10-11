@@ -214,7 +214,14 @@ reproducible without hardware. The MIDI traffic in the monitor shot is simulated
 - **About dialog** — version, donate and rate buttons, links to the source; external links may
   open only the allow-listed URLs.
 
-**Coming next** — headphone cueing (M8). See the [Roadmap](#%EF%B8%8F-roadmap).
+- **Headphones** — pre-listen any channel before its fader (cue per channel, master cue,
+  cue/master blend, level). The DDJ-200 has no sound card, so the headphones go to outputs 3/4
+  of a four-output interface or to a second device (USB headphones, the Mac's headphone jack
+  next to an external interface). A second device runs on its own clock; rille follows it
+  (±200 ppm without a dropout, the speed correction stays below 0.06 %), and if it is
+  unplugged the master plays on.
+
+**Coming next** — polish and acceptance (M9). See the [Roadmap](#%EF%B8%8F-roadmap).
 
 ## 🎛️ Pioneer DDJ-200
 
@@ -234,8 +241,8 @@ mode and the MIDI monitor are in the settings.
 | Beat Sync | Short: sync · long: sync lock (LED = lock) | Cycle tempo range (±6/10/16 %/wide) | ✅ |
 | EQ Hi / Mid / Low | Three-band isolator EQ | — | ✅ |
 | CFX | Bipolar filter (left low-pass, right high-pass) | — | ✅ |
-| Headphone cue | Pre-listen the channel | Load the selected track | M8 / ✅ |
-| Master cue | Master in the headphones | — | M8 |
+| Headphone cue | Pre-listen the channel (LED = on) | Load the selected track | ✅ |
+| Master cue | Master in the headphones (LED = on) | — | ✅ |
 | Transition FX | Echo-out / filter-out on the louder playing deck; again = cancel | Change effect | ✅ |
 | Pads 1–8 | Hot cue / beat loop (¼–32) / beat jump (top row back ½·1·4·16, bottom forward), mode chosen in the app | Delete cue / exit loop | ✅ |
 
@@ -275,6 +282,7 @@ Everything works without a controller:
 | Waveform zoom | Mouse wheel over the detail waveform, or focus it and press + / − |
 | Sync | SYNC (once) and LOCK (keep following) next to Play |
 | Pads | Choose Hot Cue / Loop / Jump above the pads; click a pad; Shift + click deletes a cue or leaves the loop |
+| Headphones | 🎧 next to 1 / 2 / M in the mixer; MIX (cue ↔ master) and PHONES (level) above the master fader; output in the settings |
 | Beatgrid | GRID next to the BPM: ◀ ▶ move it, ÷2 ×2, ±0.01 BPM, TAP in time |
 | Import music | "Ordner importieren", or drop a folder onto the library |
 | Library | Search field (↓ / Enter jumps into the list); in the list ↑ ↓, Page ↑ ↓, Home / End; Enter = first empty deck, `1` / `2` = deck 1 / 2; click a column to sort |
@@ -410,7 +418,7 @@ and CI commits new numbers whenever they change.
 
 | Suite | Where | Highlights |
 |---|---|---|
-| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, keylock pitch and timing at ±16 % (zero crossings), keylock alignment with the playhead, sync at ×½/×2 and range widening, sync lock holding the phase for 30 s while the leader changes tempo, loops exact to the frame at any tempo, no gap after jumps at any tempo, reverse, scratch, bend, search, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps, progressive loading (reader never sees unpublished frames), BPM on synthetic patterns (kicks at 90–174 BPM, swing, open hats, breakdown, live-drummer drift) and refusals (silence, noise, random hits), peaks format, database migrations, import → analysis → peaks end to end |
+| Rust unit + integration | `crates/*/src`, `crates/*/tests`, `src-tauri/src` | cue state machine, curves, smoothing, declick, meters, measured EQ/filter frequency responses, echo-out/filter-out life cycle, keylock pitch and timing at ±16 % (zero crossings), keylock alignment with the playhead, sync at ×½/×2 and range widening, sync lock holding the phase for 30 s while the leader changes tempo, loops exact to the frame at any tempo, headphone bus before the fader, clock drift of ±200 ppm followed for 3 minutes without a dropout, no gap after jumps at any tempo, reverse, scratch, bend, search, decoder edge cases, every PDF row of the DDJ-200, 14-bit/jog/shift decoding, soft takeover incl. reconnect and fast sweeps, progressive loading (reader never sees unpublished frames), BPM on synthetic patterns (kicks at 90–174 BPM, swing, open hats, breakdown, live-drummer drift) and refusals (silence, noise, random hits), peaks format, database migrations, import → analysis → peaks end to end |
 | Allocation guard | `crates/rille-engine/tests/no_alloc.rs` | 2,000 blocks under `assert_no_alloc` incl. tempo, keylock, scratch and reverse, plus a counter-check that a planted allocation is caught |
 | C++ allocation guard | `crates/rille-engine/tests/stretch_alloc.rs` | Signalsmith Stretch `process`/`reset`/`seek` at changing rates through the `malloc_logger` hook, with a counter-check |
 | CoreMIDI round trip | `crates/rille-midi/tests/virtual_roundtrip.rs` | virtual DDJ-200 → port → decoder → action, and LEDs back |
@@ -456,7 +464,7 @@ rille/
 | M5 | Library: import, SQLite, BPM/beatgrid analysis, search, drag & drop | ✅ |
 | M6 | Waveforms (overview + scrolling detail, frequency colours), deck UI | ✅ |
 | M7 | Sync & sync lock, hot cues, beat loops, beat jump, pad modes | ✅ (hardware acceptance pending) |
-| M8 | Headphone cueing on a second device or a 4-channel interface | ⏳ |
+| M8 | Headphone cueing on a second device or a 4-channel interface | ✅ (hardware acceptance pending) |
 | M9 | Full keyboard control, light theme, empty states, measured budgets | ⏳ |
 
 Later: key detection, more effects, recording, sampler pads.

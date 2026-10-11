@@ -99,6 +99,11 @@ Das Frontend rechnet nichts Audio-Relevantes.
   Durchlauf mit der Varispeed-Brücke (bekannte Grenze, Plan M7).
 - Vom Nutzer korrigierte Grids (`grid_user`, Schema v4) überschreibt keine Analyse; erst eine
   geänderte Datei setzt das zurück.
+- **Kopfhörer auf zweitem Gerät:** Engine → `cue_tx`-Ring → `DriftReader` im Callback des
+  Zweitgeräts (eigener `CueSlot`, überlebt Stream-Wechsel). Der Regler ist reiner P-Anteil
+  (τ ≈ 10 s); die Rate wandert um bis zu 0,03 %, weil die Blockphase beider Geräte wandert –
+  das ist echt, nicht Schwingung (unter 1 Cent, unhörbar). Ein Integrator brachte Schwingen.
+- Lock-Reihenfolge im AudioService: `output` vor `cue`, nie beide gleichzeitig.
 - `Command` ist 32 Byte groß, seit `SetGrid` zwei `f64` trägt (ein `f32`-Grid driftet).
 - In Playwright „Cue“ immer mit `exact: true` suchen: die Hot-Cue-Pads heißen „Hot Cue n …“.
 - BPM: lieber „kein Tempo“ als ein geratenes. Neue Heuristiken immer gegen Rauschen und

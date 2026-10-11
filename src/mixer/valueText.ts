@@ -19,3 +19,11 @@ export function filterText(v: number): string {
     ? `Tiefpass ${Math.round((0.5 - v) * 200)} %`
     : `Hochpass ${Math.round((v - 0.5) * 200)} %`;
 }
+
+/** Headphone blend: `Cue`, `Master` at the ends, else both shares. */
+export function cueMixText(value: number): string {
+  const v = Number.isFinite(value) ? Math.min(1, Math.max(0, value)) : 0.5;
+  if (v <= 0.005) return 'Nur Cue';
+  if (v >= 0.995) return 'Nur Master';
+  return `Cue ${Math.round((1 - v) * 100)} % · Master ${Math.round(v * 100)} %`;
+}

@@ -71,3 +71,23 @@
 .link:hover {
   background: color-mix(in srgb, var(--md-primary) calc(var(--state-hover) * 100%), transparent);
 }
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-top: var(--stroke-hairline) solid var(--md-outline-variant);
+  padding-top: var(--space-4);
+}
+
+.heading {
+  margin: 0;
+  font: var(--type-title-s);
+  color: var(--md-on-surface);
+}
+
+.hint {
+  margin: 0;
+  font: var(--type-body-s);
+  color: var(--md-on-surface-variant);
+}

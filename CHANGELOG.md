@@ -7,6 +7,11 @@ All notable changes to rille are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- M8 headphones: pre-fader cue per channel, master cue, cue/master blend and level (all
+  smoothed); routed to outputs 3/4 of the main device or to a second device through a
+  lock-free ring with drift compensation (P controller on the ring fill, cubic resampling).
+  A failing headphone device never stops the master. DDJ-200 headphone and master cue buttons
+  toggle with LEDs; settings choose the headphone output and buffer.
 - M7 beat features: sync (tempo ×½/×1/×2 with range widening, phase), sync lock (tempo follow
   plus a phase correction of at most 2 % speed), beat loops ¼–32 beats exact to the frame at
   any tempo, beat jump ±½/1/4/16 (moves a running loop), eight hot cues per deck snapped to the

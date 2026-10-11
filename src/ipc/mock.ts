@@ -134,6 +134,10 @@ export function createMockBackend(): Backend {
       [false, false, false],
     ] as StateFrame['eqKill'],
     filter: [0.5, 0.5] as [number, number],
+    cue: [false, false] as [boolean, boolean],
+    masterCue: false,
+    cueMix: 0.5,
+    cueLevel: 0.8,
     transition: { kind: 'echoOut', deck: null, releasing: false } as StateFrame['transition'],
     /** performance.now() when the running transition started. */
     transitionStart: 0,
@@ -161,6 +165,15 @@ export function createMockBackend(): Backend {
     latencyMs: 5.3,
     deviceXruns: 0,
     error: null,
+    cue: {
+      setting: { kind: 'off' },
+      active: false,
+      deviceName: null,
+      bufferFrames: null,
+      latencyMs: 0,
+      underruns: 0,
+      error: null,
+    },
   };
 
   const emit = <E extends keyof BackendEvents>(event: E, payload: BackendEvents[E]) =>
@@ -285,6 +298,16 @@ export function createMockBackend(): Backend {
       eq: [[...state.eq[0]], [...state.eq[1]]],
       eqKill: [[...state.eqKill[0]], [...state.eqKill[1]]],
       filter: [...state.filter],
+      cue: [...state.cue],
+      masterCue: state.masterCue,
+      cueMix: state.cueMix,
+      cueLevel: state.cueLevel,
+      cuePeak: status.cue.active
+        ? [
+            Math.max(state.cue[0] ? decks[0].peak[0] : 0, state.cue[1] ? decks[1].peak[0] : 0),
+            Math.max(state.cue[0] ? decks[0].peak[1] : 0, state.cue[1] ? decks[1].peak[1] : 0),
+          ]
+        : [0, 0],
       transition: { ...state.transition },
       xruns: 0,
       droppedCommands: 0,
@@ -509,6 +532,18 @@ export function createMockBackend(): Backend {
           };
         }
         break;
+      case 'headphoneCue':
+        state.cue[idx(action.deck)] = action.on;
+        break;
+      case 'masterCue':
+        state.masterCue = action.on;
+        break;
+      case 'cueMix':
+        state.cueMix = unit(action.value);
+        break;
+      case 'cueLevel':
+        state.cueLevel = unit(action.value);
+        break;
     }
   }
 
@@ -592,10 +627,51 @@ export function createMockBackend(): Backend {
       return () => {};
     },
     async audioDevices() {
-      return [{ id: 'mock', name: 'Browser (Simulation)', maxChannels: 2, isDefault: true }];
+      return [
+        { id: 'mock', name: 'Browser (Simulation)', maxChannels: 2, isDefault: true },
+        { id: 'mock-phones', name: 'USB-Kopfhörer', maxChannels: 2, isDefault: false },
+      ];
     },
     async audioStatus() {
       return { ...status };
+    },
+    async setCue(setting) {
+      // Simulated devices: the main output has two outputs, a second device always works.
+      if (setting.kind === 'channels34') {
+        status.cue = {
+          ...status.cue,
+          setting,
+          active: false,
+          deviceName: null,
+          error:
+            'Das Ausgabegerät hat keine Ausgänge 3/4. Wähle ein Gerät mit vier Ausgängen oder ein zweites Gerät für den Kopfhörer.',
+        };
+        emit('audio-changed', { ...status, cue: { ...status.cue } });
+        throw new Error(status.cue.error ?? '');
+      }
+      status.cue =
+        setting.kind === 'off'
+          ? {
+              ...status.cue,
+              setting,
+              active: false,
+              deviceName: null,
+              bufferFrames: null,
+              latencyMs: 0,
+              error: null,
+            }
+          : {
+              ...status.cue,
+              setting,
+              active: true,
+              deviceName:
+                setting.deviceId === 'mock-phones' ? 'USB-Kopfhörer' : 'MacBook Pro-Kopfhörer',
+              bufferFrames: setting.bufferFrames,
+              latencyMs: (setting.bufferFrames * 3) / (RATE / 1000),
+              error: null,
+            };
+      emit('audio-changed', { ...status, cue: { ...status.cue } });
+      return { ...status, cue: { ...status.cue } };
     },
     async audioOpen(_deviceId, bufferFrames) {
       status.requestedBuffer = bufferFrames;

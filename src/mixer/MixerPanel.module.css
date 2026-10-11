@@ -53,6 +53,39 @@
   --accent: var(--md-primary);
 }
 
+.head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.cue {
+  display: grid;
+  place-items: center;
+  width: var(--size-cue-toggle);
+  height: var(--size-cue-toggle);
+  border: var(--stroke-hairline) solid var(--md-outline-variant);
+  border-radius: var(--shape-full);
+  padding: 0;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  cursor: pointer;
+  transition: background-color var(--motion-duration-short) var(--motion-easing-effects);
+}
+
+.cue[aria-pressed='true'] {
+  border-color: transparent;
+  background: var(--accent);
+  color: var(--md-surface);
+}
+
+.phones {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .channelLabel {
   font: var(--type-title-s);
   font-stretch: var(--font-stretch-emphasized);

@@ -40,6 +40,7 @@ export const tauriBackend: Backend = {
   audioDevices: () => invoke('audio_devices'),
   audioStatus: () => invoke('audio_status'),
   audioOpen: (deviceId, bufferFrames) => invoke('audio_open', { deviceId, bufferFrames }),
+  setCue: (setting) => invoke('audio_set_cue', { setting }),
   loadFile: (deck, path) => invoke('deck_load_file', { deck, path }),
   loadTrack: (deck, id) => invoke('deck_load_track', { deck, id }),
   libraryTracks: () => invoke('library_tracks'),

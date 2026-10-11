@@ -63,6 +63,13 @@ export interface StateFrame {
   /** Bipolar filter per deck: 0 low-pass closed, 0.5 off, 1 high-pass open. */
   filter: [number, number];
   transition: TransitionFrame;
+  /** Channels on the headphone bus. */
+  cue: [boolean, boolean];
+  masterCue: boolean;
+  /** 0 = cue only, 1 = master only. */
+  cueMix: number;
+  cueLevel: number;
+  cuePeak: [number, number];
   xruns: number;
   droppedCommands: number;
 }
@@ -84,6 +91,27 @@ export interface AudioStatus {
   bufferFrames: number | null;
   latencyMs: number;
   deviceXruns: number;
+  error: string | null;
+  /** Headphone output. */
+  cue: CueStatus;
+}
+
+/** Where the headphones are connected. */
+export type CueSetting =
+  | { kind: 'off' }
+  /** Outputs 3/4 of the main device. */
+  | { kind: 'channels34' }
+  /** A second device (null = system default). */
+  | { kind: 'device'; deviceId: string | null; bufferFrames: number };
+
+export interface CueStatus {
+  setting: CueSetting;
+  /** The headphone signal reaches a device. */
+  active: boolean;
+  deviceName: string | null;
+  bufferFrames: number | null;
+  latencyMs: number;
+  underruns: number;
   error: string | null;
 }
 
@@ -171,7 +199,11 @@ export type MixerAction =
   | { type: 'eqKill'; deck: Deck; band: Band; kill: boolean }
   | { type: 'filter'; deck: Deck; value: number }
   | { type: 'transitionFx' }
-  | { type: 'cycleTransitionFx' };
+  | { type: 'cycleTransitionFx' }
+  | { type: 'headphoneCue'; deck: Deck; on: boolean }
+  | { type: 'masterCue'; on: boolean }
+  | { type: 'cueMix'; value: number }
+  | { type: 'cueLevel'; value: number };
 
 export interface ControllerStatus {
   connected: boolean;
@@ -225,6 +257,8 @@ export interface Backend {
   audioDevices(): Promise<AudioDevice[]>;
   audioStatus(): Promise<AudioStatus>;
   audioOpen(deviceId: string | null, bufferFrames: number): Promise<AudioStatus>;
+  /** Route the headphones; rejects with a German message if that is not possible. */
+  setCue(setting: CueSetting): Promise<AudioStatus>;
   loadFile(deck: Deck, path: string): Promise<number>;
   /** Load a library track; resolves with the request id like `loadFile`. */
   loadTrack(deck: Deck, id: number): Promise<number>;

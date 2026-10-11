@@ -6,7 +6,7 @@ import { Meter } from '../components/Meter';
 import type { AppState } from '../state/store';
 import { useAppState } from '../state/store';
 import { useOptimistic } from '../state/useOptimistic';
-import { TRANSITION_NAMES, eqText, filterText } from './valueText';
+import { TRANSITION_NAMES, cueMixText, eqText, filterText } from './valueText';
 import styles from './MixerPanel.module.css';
 
 const peakA = (s: AppState) => s.frame?.decks[0].peak;
@@ -59,6 +59,40 @@ function EqKnob({ deck, band, caption, name, channel, value, killed }: EqKnobPro
   );
 }
 
+/** Headphone icon toggle: a channel (or the master) on the headphone bus. */
+function CueToggle({
+  label,
+  on,
+  onToggle,
+}: {
+  label: string;
+  on: boolean;
+  onToggle: (on: boolean) => void;
+}) {
+  const state = useOptimistic(on);
+  return (
+    <button
+      type="button"
+      className={styles.cue}
+      aria-label={label}
+      aria-pressed={state.shown}
+      title={`${label} (vorhören)`}
+      onClick={() => {
+        const next = !state.current();
+        state.set(next);
+        onToggle(next);
+      }}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M12 3a9 9 0 0 0-9 9v6a3 3 0 0 0 3 3h2v-8H5v-1a7 7 0 0 1 14 0v1h-3v8h2a3 3 0 0 0 3-3v-6a9 9 0 0 0-9-9Z"
+        />
+      </svg>
+    </button>
+  );
+}
+
 function Channel({ deck }: { deck: Deck }) {
   const i = deck === 'a' ? 0 : 1;
   const fader = useAppState((s) => s.frame?.channelFader[i] ?? 1);
@@ -66,9 +100,17 @@ function Channel({ deck }: { deck: Deck }) {
   const kill = useAppState((s) => s.frame?.eqKill[i]);
   const filter = useAppState((s) => s.frame?.filter[i] ?? 0.5);
   const label = deck === 'a' ? 'Kanal 1' : 'Kanal 2';
+  const cue = useAppState((s) => s.frame?.cue[i] ?? false);
   return (
     <div className={styles.channel} data-deck={deck}>
-      <span className={styles.channelLabel}>{deck === 'a' ? '1' : '2'}</span>
+      <div className={styles.head}>
+        <span className={styles.channelLabel}>{deck === 'a' ? '1' : '2'}</span>
+        <CueToggle
+          label={`Kopfhörer ${label}`}
+          on={cue}
+          onToggle={(on) => backend.mixer({ type: 'headphoneCue', deck, on })}
+        />
+      </div>
       <div className={styles.knobs}>
         {BANDS.map(({ band, index, caption, name }) => (
           <EqKnob
@@ -157,6 +199,9 @@ export function MixerPanel() {
   const crossfader = useAppState((s) => s.frame?.crossfader ?? 0.5);
   const curve = useAppState((s) => s.frame?.curve ?? 'smooth');
   const master = useAppState((s) => s.frame?.masterGain ?? 1);
+  const masterCue = useAppState((s) => s.frame?.masterCue ?? false);
+  const cueMix = useAppState((s) => s.frame?.cueMix ?? 0.5);
+  const cueLevel = useAppState((s) => s.frame?.cueLevel ?? 0.8);
 
   return (
     <section className={styles.mixer} aria-label="Mixer">
@@ -164,7 +209,32 @@ export function MixerPanel() {
       <div className={styles.channels}>
         <Channel deck="a" />
         <div className={styles.master}>
-          <span className={styles.channelLabel}>M</span>
+          <div className={styles.head}>
+            <span className={styles.channelLabel}>M</span>
+            <CueToggle
+              label="Kopfhörer Master"
+              on={masterCue}
+              onToggle={(on) => backend.mixer({ type: 'masterCue', on })}
+            />
+          </div>
+          <div className={styles.phones} role="group" aria-label="Kopfhörer">
+            <Knob
+              label="Kopfhörer Cue/Master"
+              caption="MIX"
+              value={cueMix}
+              defaultValue={0.5}
+              valueText={cueMixText(cueMix)}
+              onChange={(value) => backend.mixer({ type: 'cueMix', value })}
+            />
+            <Knob
+              label="Kopfhörer-Lautstärke"
+              caption="PHONES"
+              value={cueLevel}
+              defaultValue={0.8}
+              valueText={`${Math.round(cueLevel * 100)} %`}
+              onChange={(value) => backend.mixer({ type: 'cueLevel', value })}
+            />
+          </div>
           <div className={styles.strip}>
             <Meter label="Pegel Master" select={peakMaster} />
             <Fader
