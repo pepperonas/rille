@@ -6,7 +6,9 @@
 use std::sync::Arc;
 
 use assert_no_alloc::{AllocDisabler, assert_no_alloc, reset_violation_count, violation_count};
-use rille_core::{Command, DeckCommand, DeckId, EqBand, MixerCommand, TempoRange, TrackAudio};
+use rille_core::{
+    BeatGrid, Command, DeckCommand, DeckId, EqBand, MixerCommand, TempoRange, TrackAudio,
+};
 use rille_engine::engine_pair;
 
 #[global_allocator]
@@ -91,6 +93,31 @@ fn process_never_allocates() {
                     DeckCommand::Reverse(block % 200 < 100),
                 ));
                 handle.send(Command::Deck(DeckId::A, DeckCommand::Search(3)));
+            }
+            35 | 45 => {
+                // Beat features: grid, sync and lock, loops (incl. resize and exit), jumps, cues.
+                let grid = BeatGrid {
+                    bpm: 120.0 + f64::from(block % 13),
+                    first_beat: 0.05,
+                };
+                for deck in DeckId::ALL {
+                    handle.send(Command::Deck(deck, DeckCommand::SetGrid(Some(grid))));
+                }
+                handle.send(Command::Deck(DeckId::B, DeckCommand::Sync));
+                handle.send(Command::Deck(DeckId::B, DeckCommand::ToggleSyncLock));
+                handle.send(Command::Deck(
+                    DeckId::A,
+                    DeckCommand::BeatLoop([0.25, 1.0, 4.0][(block % 3) as usize]),
+                ));
+                handle.send(Command::Deck(DeckId::A, DeckCommand::BeatJump(-1.0)));
+                handle.send(Command::Deck(
+                    DeckId::A,
+                    DeckCommand::HotCue((block % 8) as u8),
+                ));
+                if block % 150 == 45 {
+                    handle.send(Command::Deck(DeckId::A, DeckCommand::HotCueClear(2)));
+                    handle.send(Command::Deck(DeckId::A, DeckCommand::LoopExit));
+                }
             }
             15 => {
                 // Start or cancel a transition effect; cycle the kind now and then.

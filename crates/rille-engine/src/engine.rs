@@ -6,11 +6,13 @@
 use std::sync::Arc;
 
 use rille_core::{
-    Command, CrossfaderCurve, DeckCommand, DeckId, DeckSnapshot, MixerCommand, Snapshot, TrackAudio,
+    BeatGrid, Command, CrossfaderCurve, DeckCommand, DeckId, DeckSnapshot, HOT_CUES, MixerCommand,
+    Snapshot, TrackAudio,
 };
 use rtrb::{Consumer, Producer, RingBuffer};
 use triple_buffer::{Input, Output};
 
+use crate::beat;
 use crate::curves::{channel_gain, crossfader_gains, trim_gain};
 use crate::dsp::eq::Eq;
 use crate::dsp::filter::BipolarFilter;
@@ -37,7 +39,25 @@ pub const LEVEL_SMOOTHING_MS: f32 = 8.0;
 pub struct TrackLoad {
     pub deck: DeckId,
     pub track: Arc<TrackAudio>,
+    /// Known from the library already (analysed before); later through `SetGrid`.
+    pub grid: Option<BeatGrid>,
+    /// Saved hot cues, in engine frames.
+    pub hot_cues: [Option<u64>; HOT_CUES],
 }
+
+impl TrackLoad {
+    pub fn new(deck: DeckId, track: Arc<TrackAudio>) -> TrackLoad {
+        TrackLoad {
+            deck,
+            track,
+            grid: None,
+            hot_cues: [None; HOT_CUES],
+        }
+    }
+}
+
+/// Seconds sync lock takes to pull a phase error in (before the nudge limit applies).
+const SYNC_CORRECTION_S: f64 = 1.0;
 
 /// Things the engine reports that must not get lost (unlike the snapshot, which is overwritten).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,11 +139,19 @@ impl EngineHandle {
 
     /// Hand a decoded track to a deck. Gives the track back if the queue is full.
     pub fn load(&mut self, deck: DeckId, track: Arc<TrackAudio>) -> Result<(), Arc<TrackAudio>> {
-        self.track_tx
-            .push(TrackLoad { deck, track })
-            .map_err(|e| match e {
-                rtrb::PushError::Full(load) => load.track,
-            })
+        self.load_track(TrackLoad::new(deck, track))
+            .map_err(|load| load.track)
+    }
+
+    /// Hand a decoded track with its grid and hot cues to a deck. Gives it back if the queue
+    /// is full.
+    // The load travels by value through the lock-free queue; boxing it would mean freeing the
+    // box on the audio thread.
+    #[allow(clippy::result_large_err)]
+    pub fn load_track(&mut self, load: TrackLoad) -> Result<(), TrackLoad> {
+        self.track_tx.push(load).map_err(|e| match e {
+            rtrb::PushError::Full(load) => load,
+        })
     }
 
     /// Latest engine state. Cheap; call at UI rate.
@@ -210,6 +238,14 @@ struct Deck {
     eq: Eq,
     filter: BipolarFilter,
     player: Player,
+    grid: Option<BeatGrid>,
+    hot_cues: [Option<u64>; HOT_CUES],
+    /// `[start, end)` in frames.
+    loop_range: Option<(u64, u64)>,
+    sync_lock: bool,
+    /// When sync lock was switched on (block count); with both decks locked, the later one
+    /// follows the other.
+    locked_at: u64,
 }
 
 impl Deck {
@@ -227,7 +263,63 @@ impl Deck {
             eq: Eq::new(sample_rate),
             filter: BipolarFilter::new(sample_rate),
             player: Player::new(sample_rate, max_block),
+            grid: None,
+            hot_cues: [None; HOT_CUES],
+            loop_range: None,
+            sync_lock: false,
+            locked_at: 0,
         }
+    }
+
+    fn grid(&self) -> Option<BeatGrid> {
+        beat::usable(&self.grid)
+    }
+
+    /// Jump within the render (loop, sync): the transport moves, the player follows and the
+    /// declick crossfades from what was just heard.
+    fn jump(&mut self, to: f64) {
+        let before = self.transport;
+        let to = to.clamp(0.0, self.transport.frames as f64);
+        if (to - self.player.playhead()).abs() < 0.5 {
+            return;
+        }
+        self.transport.position = to as u64;
+        // The exact position, fraction included: a loop must repeat to the sub-frame.
+        self.player.jump_to(to);
+        self.declick(before);
+    }
+
+    /// Frames that can be rendered before the playhead reaches the loop end (at least 1, at
+    /// most `max`). The rate is an estimate; a short overshoot is carried into the loop start.
+    fn until_loop_end(&self, max: usize) -> usize {
+        let Some((_, end)) = self.loop_range else {
+            return max;
+        };
+        if !self.transport.playing || self.player.reverse() {
+            return max;
+        }
+        let ahead = end as f64 - self.player.playhead();
+        if ahead <= 0.0 {
+            return 1;
+        }
+        let rate = f64::from(self.player.rate().max(self.player.tempo_rate())).max(0.05);
+        ((ahead / rate).ceil() as usize).clamp(1, max)
+    }
+
+    /// Past the loop end while playing forward: back to the start, keeping the overshoot.
+    fn wrap_loop(&mut self) {
+        let Some((start, end)) = self.loop_range else {
+            return;
+        };
+        let pos = self.player.playhead();
+        if !self.transport.playing || self.player.reverse() || pos < end as f64 {
+            return;
+        }
+        let len = (end - start).max(1) as f64;
+        let over = (pos - end as f64).rem_euclid(len);
+        // Audio was rendered since the last jump: the tail must start from what was heard now.
+        self.tail_unheard = false;
+        self.jump(start as f64 + over);
     }
 
     /// EQ and filter, in place on the rendered block.
@@ -261,18 +353,34 @@ impl Deck {
         }
     }
 
-    /// Render `frames` frames into `self.buffer`. Returns `true` when the track ended.
+    /// Render `frames` frames into `self.buffer`. Returns `true` when the track ended. A loop
+    /// splits the block at its end, so the jump back lands on the exact frame.
     fn render(&mut self, frames: usize) -> bool {
         self.tail_unheard = false;
-        let out = &mut self.buffer[..frames * 2];
-        let Some(track) = &self.track else {
-            out.fill(0.0);
+        // Taken out for the render (a move, no reference count change) and put back below.
+        let Some(track) = self.track.take() else {
+            self.buffer[..frames * 2].fill(0.0);
             self.tail = None;
             return false;
         };
         // The length can still change while the track loads (an MP3 estimate is corrected
         // once decoding finishes).
         self.transport.frames = track.frames() as u64;
+        let mut done = 0;
+        let mut ended = false;
+        while done < frames {
+            let n = self.until_loop_end(frames - done);
+            ended |= self.render_part(&track, done, n);
+            done += n;
+            self.wrap_loop();
+        }
+        self.track = Some(track);
+        ended
+    }
+
+    /// Render `frames` frames at `offset` in the block.
+    fn render_part(&mut self, track: &TrackAudio, offset: usize, frames: usize) -> bool {
+        let out = &mut self.buffer[offset * 2..(offset + frames) * 2];
         let playing = self.transport.playing;
         let hit = self.player.render(track, playing, out);
         let length = self.declick_frames as f32;
@@ -402,6 +510,7 @@ impl Engine {
     fn process_block(&mut self, out: &mut [f32], channels: usize, frames: usize) {
         self.drain_queues();
         self.retry_pending_drops();
+        self.update_sync_lock();
 
         for (index, deck) in self.decks.iter_mut().enumerate() {
             if deck.render(frames)
@@ -499,6 +608,9 @@ impl Engine {
         let track_id = load.track.id;
         deck.transport = Transport::new(load.track.frames() as u64);
         deck.player.reset_for_track();
+        deck.grid = load.grid;
+        deck.hot_cues = load.hot_cues;
+        deck.loop_range = None;
         let old = deck.track.replace(load.track);
         self.release(old);
         let _ = self.io.events_tx.push(EngineEvent::TrackLoaded {
@@ -540,19 +652,31 @@ impl Engine {
     }
 
     fn apply_deck(&mut self, id: DeckId, cmd: DeckCommand) {
+        match cmd {
+            DeckCommand::Sync => return self.sync_once(id),
+            DeckCommand::SyncLock(on) => return self.set_sync_lock(id, on),
+            DeckCommand::ToggleSyncLock => {
+                let on = !self.decks[id.index()].sync_lock;
+                return self.set_sync_lock(id, on);
+            }
+            _ => {}
+        }
         if cmd == DeckCommand::Unload {
             self.transition.release_deck(id);
             let deck = &mut self.decks[id.index()];
             deck.transport = Transport::new(0);
             deck.player.reset_for_track();
+            deck.grid = None;
+            deck.hot_cues = [None; HOT_CUES];
+            deck.loop_range = None;
             let old = deck.track.take();
             self.release(old);
             return;
         }
         let deck = &mut self.decks[id.index()];
         let before = deck.transport;
-        let t = &mut deck.transport;
-        let p = &mut deck.player;
+        // Rebound for each arm that needs them; `deck` stays usable for the beat commands.
+        let (t, p) = (&mut deck.transport, &mut deck.player);
         match cmd {
             DeckCommand::PlayPause => t.play_pause(),
             DeckCommand::Play => t.play(),
@@ -576,6 +700,54 @@ impl Engine {
                 t.position = (p.playhead() as u64).min(t.frames);
             }
             DeckCommand::Reverse(on) => p.set_reverse(on),
+            DeckCommand::Sync | DeckCommand::SyncLock(_) | DeckCommand::ToggleSyncLock => {}
+            DeckCommand::SetGrid(grid) => deck.grid = grid,
+            DeckCommand::BeatLoop(beats) => {
+                deck.loop_range = beat_loop(
+                    deck.grid(),
+                    deck.loop_range,
+                    beats,
+                    deck.player.playhead(),
+                    deck.transport.frames,
+                    self.sample_rate,
+                );
+                // Shortened loop already behind the playhead: back into it.
+                deck.wrap_loop();
+            }
+            DeckCommand::LoopExit => deck.loop_range = None,
+            DeckCommand::BeatJump(beats) => {
+                if let Some(g) = deck.grid()
+                    && beats.is_finite()
+                {
+                    let delta = f64::from(beats) * beat::beat_frames(&g, self.sample_rate);
+                    let last = deck.transport.frames.saturating_sub(1) as f64;
+                    let to = (deck.player.playhead() + delta).clamp(0.0, last);
+                    let moved = to - deck.player.playhead();
+                    deck.transport.position = to as u64;
+                    // A running loop moves along, so the jump keeps looping the same phrase.
+                    if let Some((start, end)) = deck.loop_range {
+                        let start = (start as f64 + moved).max(0.0) as u64;
+                        let end = (end as f64 + moved).max(0.0) as u64;
+                        deck.loop_range = (end > start).then_some((start, end));
+                    }
+                }
+            }
+            DeckCommand::HotCue(slot) => {
+                let quantized =
+                    beat::quantize_cue(deck.grid(), deck.player.playhead(), self.sample_rate);
+                let frames = deck.transport.frames;
+                if let Some(cue) = deck.hot_cues.get_mut(usize::from(slot)) {
+                    match *cue {
+                        Some(at) => deck.transport.position = at.min(frames),
+                        None => *cue = Some((quantized as u64).min(frames)),
+                    }
+                }
+            }
+            DeckCommand::HotCueClear(slot) => {
+                if let Some(cue) = deck.hot_cues.get_mut(usize::from(slot)) {
+                    *cue = None;
+                }
+            }
         }
         // A jump made by the transport (cue, seek, jump to start) moves the playhead.
         if deck.transport.position != before.position && !matches!(cmd, DeckCommand::Search(_)) {
@@ -588,6 +760,128 @@ impl Engine {
         if started {
             self.transition.release_deck(id);
         }
+    }
+
+    /// Sync source for `id`: the other deck, if it has a track and a grid.
+    fn sync_source(&self, id: DeckId) -> Option<(DeckId, BeatGrid)> {
+        let other = id.other();
+        let d = &self.decks[other.index()];
+        d.track.as_ref()?;
+        Some((other, d.grid()?))
+    }
+
+    /// Tempo (and range) for `id` to follow `source`. `None` without grids or out of reach.
+    fn follow(&self, id: DeckId, source: DeckId, source_grid: BeatGrid) -> Option<beat::Follow> {
+        let own = self.decks[id.index()].grid()?;
+        let target_bpm =
+            source_grid.bpm * f64::from(self.decks[source.index()].player.tempo_rate());
+        beat::follow(own.bpm, target_bpm)
+    }
+
+    /// Phase error of `id` against `source` in own beats (positive = ahead).
+    fn phase_error(&self, id: DeckId, source: DeckId, follow: beat::Follow) -> Option<f64> {
+        let own = &self.decks[id.index()];
+        let src = &self.decks[source.index()];
+        let own_beat = beat::beat_at(&own.grid()?, own.player.playhead(), self.sample_rate);
+        let src_beat = beat::beat_at(&src.grid()?, src.player.playhead(), self.sample_rate);
+        Some(beat::phase_error(
+            own_beat,
+            src_beat,
+            follow.beats_per_target_beat,
+        ))
+    }
+
+    /// Set `id`'s tempo fader (widening the range if needed) to play at `rate`.
+    fn set_rate(&mut self, id: DeckId, rate: f64) {
+        let p = &mut self.decks[id.index()].player;
+        if let Some((range, position)) = beat::tempo_for_rate(rate, p.range())
+            && ((position - p.tempo()).abs() > 1e-6 || range != p.range())
+        {
+            p.set_range(range);
+            p.set_tempo(position);
+        }
+    }
+
+    /// SYNC pressed: match the other deck's tempo; if it plays, also its phase (one short
+    /// crossfaded jump).
+    fn sync_once(&mut self, id: DeckId) {
+        let Some((source, grid)) = self.sync_source(id) else {
+            return;
+        };
+        let Some(follow) = self.follow(id, source, grid) else {
+            return;
+        };
+        self.set_rate(id, follow.rate);
+        if !self.decks[source.index()].transport.playing {
+            return;
+        }
+        let Some(error) = self.phase_error(id, source, follow) else {
+            return;
+        };
+        let deck = &mut self.decks[id.index()];
+        let Some(own) = deck.grid() else { return };
+        let to = deck.player.playhead() - error * beat::beat_frames(&own, self.sample_rate);
+        let last = deck.transport.frames.saturating_sub(1) as f64;
+        let to = to.clamp(0.0, last);
+        if deck.transport.playing {
+            deck.tail_unheard = false;
+            deck.jump(to);
+        } else {
+            let before = deck.transport;
+            deck.transport.position = to as u64;
+            deck.player.jump_to(to);
+            deck.declick(before);
+        }
+    }
+
+    fn set_sync_lock(&mut self, id: DeckId, on: bool) {
+        let deck = &mut self.decks[id.index()];
+        if on && !deck.sync_lock {
+            deck.locked_at = self.frame_clock + 1;
+        }
+        deck.sync_lock = on;
+        if !on {
+            deck.player.set_sync_nudge(0.0);
+        } else {
+            self.sync_once(id);
+        }
+    }
+
+    /// Once per block: a locked deck follows the other deck's tempo and pulls its phase in
+    /// through a small rate correction (never a jump). With both locked, the later one follows.
+    fn update_sync_lock(&mut self) {
+        for id in DeckId::ALL {
+            let (me, other) = (&self.decks[id.index()], &self.decks[id.other().index()]);
+            let follows = me.sync_lock
+                && me.track.is_some()
+                && other.track.is_some()
+                && other.transport.playing
+                && !(other.sync_lock && other.locked_at > me.locked_at);
+            let nudge = if follows { self.lock_step(id) } else { 0.0 };
+            self.decks[id.index()].player.set_sync_nudge(nudge);
+        }
+    }
+
+    /// Tempo follow plus the phase correction for one locked deck.
+    fn lock_step(&mut self, id: DeckId) -> f32 {
+        let Some((source, grid)) = self.sync_source(id) else {
+            return 0.0;
+        };
+        let Some(follow) = self.follow(id, source, grid) else {
+            return 0.0;
+        };
+        self.set_rate(id, follow.rate);
+        let deck = &self.decks[id.index()];
+        if !deck.transport.playing || deck.player.hands_on() {
+            return 0.0;
+        }
+        let Some(error) = self.phase_error(id, source, follow) else {
+            return 0.0;
+        };
+        let Some(own) = deck.grid() else { return 0.0 };
+        // Seconds of error, made up within SYNC_CORRECTION_S: ahead → slower.
+        let seconds = error * 60.0 / (own.bpm * follow.rate);
+        (-seconds / SYNC_CORRECTION_S) as f32
     }
 
     fn apply_mixer(&mut self, cmd: MixerCommand) {
@@ -649,6 +943,10 @@ impl Engine {
             rate: d.player.rate(),
             reverse: d.player.reverse(),
             scratching: d.player.scratching(),
+            grid: d.grid,
+            hot_cues: d.hot_cues,
+            loop_range: d.loop_range,
+            sync_lock: d.sync_lock,
         };
         let snapshot = Snapshot {
             frame_clock: self.frame_clock,
@@ -671,6 +969,37 @@ impl Engine {
         };
         self.io.snapshot_tx.write(snapshot);
     }
+}
+
+/// The loop after BEAT LOOP `beats`: a new loop from the beat at or before the playhead (on a
+/// grid of the loop length, up to one beat), the same length again leaves it, another length
+/// resizes it from its start. Without a grid there is no beat loop. Ends at the track end.
+fn beat_loop(
+    grid: Option<BeatGrid>,
+    current: Option<(u64, u64)>,
+    beats: f32,
+    playhead: f64,
+    frames: u64,
+    sample_rate: u32,
+) -> Option<(u64, u64)> {
+    let g = grid?;
+    if !(beats.is_finite() && beats > 0.0) {
+        return current;
+    }
+    let len = f64::from(beats) * beat::beat_frames(&g, sample_rate);
+    if let Some((start, end)) = current {
+        if ((end - start) as f64 - len).abs() < 1.0 {
+            return None;
+        }
+        let end = ((start as f64 + len).round() as u64).min(frames);
+        return (end > start).then_some((start, end));
+    }
+    let step = f64::from(beats.min(1.0));
+    let at = beat::beat_at(&g, playhead, sample_rate);
+    let start = beat::frame_of_beat(&g, (at / step).floor() * step, sample_rate).max(0.0);
+    let end = ((start + len).round() as u64).min(frames);
+    let start = start.round() as u64;
+    (end > start).then_some((start, end))
 }
 
 #[cfg(test)]

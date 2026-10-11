@@ -1,4 +1,5 @@
 use crate::DeckId;
+use crate::grid::BeatGrid;
 
 /// Crossfader response curve.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -59,6 +60,12 @@ pub enum TempoRange {
 }
 
 impl TempoRange {
+    /// Fader position for `rate` in this range, or `None` if the range cannot reach it.
+    pub fn position_for(self, rate: f32) -> Option<f32> {
+        let p = (rate - 1.0) / self.span();
+        (p.is_finite() && p.abs() <= 1.0).then_some(p)
+    }
+
     pub const ALL: [TempoRange; 4] = [
         TempoRange::Six,
         TempoRange::Ten,
@@ -132,7 +139,25 @@ pub enum DeckCommand {
     Search(i32),
     /// Play backwards while held.
     Reverse(bool),
+    /// The track's beatgrid (analysis finished, or corrected by the user). `None` = no grid.
+    SetGrid(Option<BeatGrid>),
+    /// Match tempo (and phase, if the other deck plays) to the other deck once.
+    Sync,
+    /// Keep matching tempo and phase to the other deck.
+    SyncLock(bool),
+    ToggleSyncLock,
+    /// Loop this many beats from the nearest beat; the same length again leaves the loop.
+    BeatLoop(f32),
+    LoopExit,
+    /// Move by this many beats (a running loop moves along).
+    BeatJump(f32),
+    /// Hot cue pad pressed: jump to it, or set it here when empty.
+    HotCue(u8),
+    HotCueClear(u8),
 }
+
+/// Hot cues per deck.
+pub const HOT_CUES: usize = 8;
 
 /// Mixer parameters. Levels are normalised to `0.0..=1.0`.
 #[derive(Debug, Clone, Copy, PartialEq)]

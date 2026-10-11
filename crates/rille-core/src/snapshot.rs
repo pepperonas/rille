@@ -1,5 +1,7 @@
 use crate::DeckId;
+use crate::command::HOT_CUES;
 use crate::command::{CrossfaderCurve, TempoRange, TransitionKind};
+use crate::grid::BeatGrid;
 
 /// State of one deck as seen at the end of an audio block.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -25,6 +27,12 @@ pub struct DeckSnapshot {
     pub rate: f32,
     pub reverse: bool,
     pub scratching: bool,
+    pub grid: Option<BeatGrid>,
+    /// Hot cue positions in engine frames.
+    pub hot_cues: [Option<u64>; HOT_CUES],
+    /// Active loop `[start, end)` in engine frames.
+    pub loop_range: Option<(u64, u64)>,
+    pub sync_lock: bool,
 }
 
 /// State of the transition effect.

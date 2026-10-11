@@ -26,6 +26,8 @@ pub const BEND_PER_TICK_RATE: f32 = 0.0005;
 /// Bend while an app bend button is held.
 pub const BEND_HOLD: f32 = 0.04;
 pub const MAX_BEND: f32 = 0.5;
+/// Largest rate correction sync lock applies to pull the phase in (inaudible as pitch).
+pub const MAX_SYNC_NUDGE: f32 = 0.02;
 /// Platter speed is measured over this much recent time. Long enough to hold several ticks
 /// even on a slow drag with small buffers, short enough to follow a scratch back and forth.
 const SCRATCH_WINDOW_S: f32 = 0.02;
@@ -72,6 +74,8 @@ pub struct Player {
     scratch_head: usize,
     was_playing: bool,
     last_rate: f32,
+    /// Sync-lock phase correction: a small factor on the tempo rate (±`MAX_SYNC_NUDGE`).
+    sync_nudge: f32,
     stretch: Stretch,
     stretch_in: Vec<f32>,
     /// Input handed to `seek` after a jump: one full analysis block before the feed point.
@@ -155,6 +159,7 @@ impl Player {
             scratch_head: 0,
             was_playing: false,
             last_rate: 0.0,
+            sync_nudge: 0.0,
             stretch,
             stretch_in: vec![0.0; capacity * 2],
             preroll: vec![0.0; preroll_frames * 2],
@@ -204,6 +209,20 @@ impl Player {
         self.range.rate(self.tempo)
     }
 
+    /// Sync lock's phase correction, as a fraction of the tempo rate.
+    pub fn set_sync_nudge(&mut self, nudge: f32) {
+        self.sync_nudge = if nudge.is_finite() {
+            nudge.clamp(-MAX_SYNC_NUDGE, MAX_SYNC_NUDGE)
+        } else {
+            0.0
+        };
+    }
+
+    /// The DJ has a hand on the speed (bend, held bend, platter): sync lock keeps out of it.
+    pub fn hands_on(&self) -> bool {
+        self.scratching || self.bend_hold != 0 || self.bend.target() != 0.0
+    }
+
     /// Keylock output is sounding or still fading out. The engine's declick then leaves the
     /// fade-out to the player: a tail read from the raw track would not match what was heard.
     pub fn owns_fade_out(&self) -> bool {
@@ -239,6 +258,7 @@ impl Player {
         self.bend_ticks = 0;
         self.bend.set_target(0.0);
         self.bend.snap();
+        self.sync_nudge = 0.0;
     }
 
     pub fn set_tempo(&mut self, position: f32) {
@@ -332,7 +352,7 @@ impl Player {
             return;
         }
         let base = if playing {
-            self.tempo_rate() * if self.reverse { -1.0 } else { 1.0 }
+            self.tempo_rate() * (1.0 + self.sync_nudge) * if self.reverse { -1.0 } else { 1.0 }
         } else {
             0.0
         };

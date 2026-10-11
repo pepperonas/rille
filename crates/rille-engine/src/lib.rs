@@ -1,6 +1,7 @@
 //! Realtime audio engine. The audio callback in this crate never allocates, locks, logs or does
 //! I/O; see `.claude/rules/audio-realtime.md`.
 
+pub mod beat;
 pub mod curves;
 pub mod dsp;
 pub mod engine;
