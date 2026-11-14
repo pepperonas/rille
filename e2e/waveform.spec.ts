@@ -71,9 +71,26 @@ test('nothing is drawn while both decks stand still; playing draws every frame',
   expect(await draws(page)).toBe(before);
 
   await deck(page, 'a').getByRole('button', { name: 'Play' }).click();
-  const start = await draws(page);
-  await page.waitForTimeout(1000);
-  expect((await draws(page)) - start).toBeGreaterThan(20);
+  // "Every frame" is measured against the frames the browser actually delivered in the same
+  // second, not a fixed number: the CI runner paints at ~20 fps (20 draws in 1 s were counted as
+  // a failure against the old "> 20"), a desktop at 60 or 120.
+  const { drawn, frames } = await page.evaluate(
+    () =>
+      new Promise<{ drawn: number; frames: number }>((resolve) => {
+        const count = () => (window as { __rilleWaveDraws?: number }).__rilleWaveDraws ?? 0;
+        const start = count();
+        let frames = 0;
+        const t0 = performance.now();
+        requestAnimationFrame(function tick(now) {
+          frames++;
+          if (now - t0 < 1000) requestAnimationFrame(tick);
+          else resolve({ drawn: count() - start, frames });
+        });
+      }),
+  );
+  expect(frames).toBeGreaterThan(5);
+  // One detail draw per frame for the playing deck; a frame or two of slack at the edges.
+  expect(drawn).toBeGreaterThanOrEqual(frames - 2);
 });
 
 test('a click into the overview seeks there', async ({ page }) => {
