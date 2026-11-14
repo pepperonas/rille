@@ -172,6 +172,10 @@ Das Frontend rechnet nichts Audio-Relevantes.
 - Playwright: `fill()` löst **kein** keydown aus – für Tastatur-Tests `pressSequentially`.
   Negative Prüfungen („Taste wirkt nicht“) brauchen eine kurze Wartezeit, sonst besteht
   `toBeVisible` sofort, bevor der Zustand ankommt.
+- Playwright: `goto` kehrt beim Load-Ereignis zurück, der globale Tastatur-Handler entsteht aber
+  erst in einem React-Effekt danach. Eine Taste direkt nach `goto` geht auf langsamen Runnern
+  verloren (in der CI gemessen: Taste bei 320 ms, Handler bei 329 ms). Vorher etwas anklicken
+  oder auf das Ergebnis warten, oder eine idempotente Taste in `expect(…).toPass()` wiederholen.
 - Einstellungen (Theme, Start-Tempobereich, Crossfader-Kurve) liegen im `localStorage`
   (`rille.prefs`, `src/settings/prefs.ts`); das Theme wird vor dem ersten Render gesetzt und
   im Tauri-Fenster per `setTheme` gespiegelt (Capability `core:window:allow-set-theme`).

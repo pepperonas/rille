@@ -82,8 +82,15 @@ test('deck keys: play, cue, pads, pad mode, sync lock', async ({ page }) => {
 test('crossfader keys', async ({ page }) => {
   await page.goto('/');
   const xf = page.getByRole('slider', { name: 'Crossfader' });
-  await page.keyboard.press('Shift+v');
-  await expect(xf).toHaveAttribute('aria-valuenow', '0');
+  // The first key needs the app's shortcut handler, which React installs in an effect after
+  // the first paint, i.e. after `goto` (the load event) has already resolved. On a slow runner
+  // a press right after `goto` lands before it and is lost (measured on CI: keys at 314/320 ms,
+  // handler added at 329 ms). ⇧V is idempotent (crossfader all the way left), so repeat it
+  // until it takes; the expected value stays exactly 0.
+  await expect(async () => {
+    await page.keyboard.press('Shift+v');
+    await expect(xf).toHaveAttribute('aria-valuenow', '0', { timeout: 500 });
+  }).toPass();
   await page.keyboard.press('n');
   await expect(xf).toHaveAttribute('aria-valuenow', '10');
   await page.keyboard.press('b');
