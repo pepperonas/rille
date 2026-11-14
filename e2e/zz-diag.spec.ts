@@ -6,7 +6,6 @@ test('diag crossfader keys', async ({ page }) => {
     window.addEventListener('keydown', (e) => (w.__keys as string[]).push(`${e.code}:${e.shiftKey}:${e.defaultPrevented}`), true);
   });
   await page.goto('/');
-  const xf = page.getByRole('slider', { name: 'Crossfader' });
   const snap = async (label: string) =>
     console.log(label, JSON.stringify(await page.evaluate(() => ({
       focus: document.hasFocus(), vis: document.visibilityState, active: document.activeElement?.tagName,
